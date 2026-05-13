@@ -1,0 +1,11 @@
+{
+  "name": "Ro2DEngine",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Ro2DEngine": {
+        "$path": "src"
+      }
+    }
+  }
+}
