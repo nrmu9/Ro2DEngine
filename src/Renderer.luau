@@ -40,7 +40,9 @@ local Renderer = {
 	Grid = {
 		ChunksX = 0, ChunksY = 0,
 		Scale = 1,
-		Width = 0, Height = 0, -- scaled canvas resolution in pixels (cached)
+		DisplayScale = 1, -- canvas (screen) pixels per one render/buffer pixel
+		OffsetX = 0, OffsetY = 0, -- letterbox offset of the rendered image within the canvas
+		Width = 0, Height = 0, -- render resolution in pixels (cached)
 		AntiAliasing = false,
 		IsReady = false,
 	},
@@ -51,6 +53,7 @@ local Chunks = {}        -- [y][x] -> Chunk  (spatial lookup)
 local ChunkList = {}     -- flat array of Chunk (order-independent iteration)
 local ChunkUIElements = {}
 local CanvasFrame: Frame? = nil
+local FixedResolution: Vector2? = nil -- when set, render at exactly this size (letterboxed)
 local UploadBufferPool = {}
 local DeveloperBackgroundCode = nil
 
@@ -88,20 +91,40 @@ local function rebuildGrid()
 	clearMemory()
 	Renderer.Grid.IsReady = false
 
-	local scale = Renderer.Grid.Scale
-	local targetWidth = floor(Renderer.Resolution.X * scale)
-	local targetHeight = floor(Renderer.Resolution.Y * scale)
-	if targetWidth <= 0 or targetHeight <= 0 then return end
+	local canvasW, canvasH = Renderer.Resolution.X, Renderer.Resolution.Y
+	if canvasW <= 0 or canvasH <= 0 then return end
+
+	local targetWidth, targetHeight, displayScale, baseOffsetX, baseOffsetY
+	if FixedResolution then
+		-- Fixed internal resolution: render exactly this many pixels, then fit into
+		-- the canvas preserving aspect (letterbox). RenderScale is ignored here.
+		targetWidth = floor(FixedResolution.X)
+		targetHeight = floor(FixedResolution.Y)
+		if targetWidth <= 0 or targetHeight <= 0 then return end
+		displayScale = min(canvasW / targetWidth, canvasH / targetHeight)
+		baseOffsetX = floor((canvasW - targetWidth * displayScale) * 0.5)
+		baseOffsetY = floor((canvasH - targetHeight * displayScale) * 0.5)
+	else
+		-- Scale mode: render at canvas size * RenderScale and fill the canvas exactly.
+		local scale = Renderer.Grid.Scale
+		targetWidth = floor(canvasW * scale)
+		targetHeight = floor(canvasH * scale)
+		if targetWidth <= 0 or targetHeight <= 0 then return end
+		displayScale = 1 / scale
+		baseOffsetX, baseOffsetY = 0, 0
+	end
 
 	Renderer.Grid.Width = targetWidth
 	Renderer.Grid.Height = targetHeight
+	Renderer.Grid.DisplayScale = displayScale
+	Renderer.Grid.OffsetX = baseOffsetX
+	Renderer.Grid.OffsetY = baseOffsetY
 
 	local chunksX = math.ceil(targetWidth / CHUNK_SIZE)
 	local chunksY = math.ceil(targetHeight / CHUNK_SIZE)
 	Renderer.Grid.ChunksX, Renderer.Grid.ChunksY = chunksX, chunksY
 
 	local filterMode = Renderer.Grid.AntiAliasing and Enum.ResamplerMode.Default or Enum.ResamplerMode.Pixelated
-	local invScale = 1 / scale
 
 	for y = 0, chunksY - 1 do
 		local row = {}
@@ -117,8 +140,8 @@ local function rebuildGrid()
 			frame.Name = string.format("Chunk_%d_%d", x, y)
 			frame.BackgroundTransparency = 1
 			frame.BorderSizePixel = 0
-			frame.Position = UDim2.fromOffset(offsetX * invScale, offsetY * invScale)
-			frame.Size = UDim2.fromOffset(chunkW * invScale, chunkH * invScale)
+			frame.Position = UDim2.fromOffset(baseOffsetX + offsetX * displayScale, baseOffsetY + offsetY * displayScale)
+			frame.Size = UDim2.fromOffset(chunkW * displayScale, chunkH * displayScale)
 			frame.ResampleMode = filterMode
 			frame.Parent = CanvasFrame
 			table.insert(ChunkUIElements, frame)
@@ -141,7 +164,7 @@ local function rebuildGrid()
 		end
 	end
 
-	UI.Init(CanvasFrame, targetWidth, targetHeight, scale)
+	UI.Init(CanvasFrame, targetWidth, targetHeight, displayScale, baseOffsetX, baseOffsetY)
 	Renderer.Grid.IsReady = true
 end
 
@@ -155,6 +178,11 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 	config = config or {}
 	Renderer.Grid.Scale = clamp(config.RenderScale or 1, 0.1, 1)
 	Renderer.Grid.AntiAliasing = config.AntiAliasing == true
+
+	-- Optional fixed internal resolution: render at exactly this size regardless of
+	-- screen, letterboxed to fit. Keeps the playfield + perf consistent across monitors.
+	local res = config.Resolution
+	FixedResolution = if typeof(res) == "Vector2" and res.X >= 1 and res.Y >= 1 then res else nil
 
 	if config.Isolate2D then
 		pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
@@ -198,8 +226,9 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 end
 
 function Renderer.System.ScreenToCanvas(screenX: number, screenY: number): (number, number)
-	local scale = Renderer.Grid.Scale
-	return floor(screenX * scale), floor(screenY * scale)
+	local g = Renderer.Grid
+	local inv = 1 / g.DisplayScale
+	return floor((screenX - g.OffsetX) * inv), floor((screenY - g.OffsetY) * inv)
 end
 
 function Renderer.System.SetBackground(callback)

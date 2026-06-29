@@ -37,7 +37,7 @@ local function resetDirty(chunk)
 	chunk.MinY = chunk.Height; chunk.MaxY = -1
 end
 
-function UI.Init(parentLayer: Frame, screenW: number, screenH: number, renderScale: number)
+function UI.Init(parentLayer: Frame, screenW: number, screenH: number, displayScale: number, baseOffsetX: number, baseOffsetY: number)
 	UI.IsReady = false
 	if UI.LayerFrame then UI.LayerFrame:Destroy() end
 
@@ -56,7 +56,7 @@ function UI.Init(parentLayer: Frame, screenW: number, screenH: number, renderSca
 
 	local chunksX = math.ceil(screenW / CHUNK_SIZE)
 	local chunksY = math.ceil(screenH / CHUNK_SIZE)
-	local invScale = 1 / renderScale
+	local invScale = displayScale -- canvas px per buffer px (matches the world layer)
 
 	for y = 0, chunksY - 1 do
 		local row = {}
@@ -72,7 +72,7 @@ function UI.Init(parentLayer: Frame, screenW: number, screenH: number, renderSca
 			frame.Name = string.format("UIChunk_%d_%d", x, y)
 			frame.BackgroundTransparency = 1
 			frame.BorderSizePixel = 0
-			frame.Position = UDim2.fromOffset(offsetX * invScale, offsetY * invScale)
+			frame.Position = UDim2.fromOffset(baseOffsetX + offsetX * invScale, baseOffsetY + offsetY * invScale)
 			frame.Size = UDim2.fromOffset(chunkW * invScale, chunkH * invScale)
 			frame.ResampleMode = Enum.ResamplerMode.Pixelated
 			frame.Parent = layer

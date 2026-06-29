@@ -16,6 +16,7 @@ export type EngineConfig = {
 	Isolate2D: boolean?,
 	RenderScale: number?,
 	AntiAliasing: boolean?,
+	Resolution: Vector2?, -- fixed internal render resolution (letterboxed); overrides RenderScale
 }
 
 export type RowBound = {
@@ -158,8 +159,8 @@ local Ro2D = {
 		IsKeyDown = function(k) return keysDown[k] == true end,
 		IsKeyPressed = function(k) return keysPressed[k] == true end,
 		GetMousePosition = function()
-			local scale = Grid.Scale
-			return math.floor(mouse.X * scale), math.floor(mouse.Y * scale)
+			local inv = 1 / Grid.DisplayScale
+			return math.floor((mouse.X - Grid.OffsetX) * inv), math.floor((mouse.Y - Grid.OffsetY) * inv)
 		end,
 		IsMouseDown = function(b)
 			return (b == 1 and mouse.LeftDown) or (b == 2 and mouse.RightDown) or false
