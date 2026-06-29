@@ -262,6 +262,12 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 	local w, h, buf, bounds = sprite.Width, sprite.Height, sprite.Buffer, sprite.RowBounds
 	local screenW, screenH = Grid.Width, Grid.Height
 
+	-- Fast path: sprites whose rows have no interior transparency (and aren't
+	-- mirrored horizontally) can be blitted one whole row-span at a time with a
+	-- native buffer.copy instead of pixel-by-pixel. Huge win for dense, small,
+	-- opaque sprites (e.g. bullets). flipY is fine — it only reorders rows.
+	local solidFast = sprite.SolidRows and not flipX
+
 	for y = 0, h - 1 do
 		local readY = if flipY then (h - 1 - y) else y
 		local row = bounds[readY]
@@ -273,33 +279,71 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 				if chunkRow then
 					local localY = drawY % CHUNK_SIZE
 					local srcRowOffset = readY * w * 4
-					local destMinX = if flipX then (w - 1 - row.MaxX) else row.MinX
-					local destMaxX = if flipX then (w - 1 - row.MinX) else row.MaxX
 
-					local startDrawX = startX + destMinX
-					local chunkX = startDrawX // CHUNK_SIZE
-					local localX = startDrawX % CHUNK_SIZE
-					local chunk = chunkRow[chunkX]
+					if solidFast then
+						-- Contiguous opaque span on screen, clipped to canvas width.
+						local spanStart = startX + row.MinX
+						local spanEnd = startX + row.MaxX
+						if spanStart < 0 then spanStart = 0 end
+						if spanEnd >= screenW then spanEnd = screenW - 1 end
 
-					for destX = destMinX, destMaxX do
-						if startDrawX >= screenW then break end
-						if chunk and startDrawX >= 0 then
-							local readX = if flipX then (w - 1 - destX) else destX
-							local src = readu32(buf, srcRowOffset + readX * 4)
-							if src > ALPHA_MASK then
-								writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, src)
+						local sx = spanStart
+						while sx <= spanEnd do
+							local chunk = chunkRow[sx // CHUNK_SIZE]
+							local localX = sx % CHUNK_SIZE
+							if chunk then
+								local maxLocal = localX + (spanEnd - sx)
+								if maxLocal > chunk.Width - 1 then maxLocal = chunk.Width - 1 end
+								local copyCount = maxLocal - localX + 1
+
+								-- src x for screen x `sx` is (sx - startX); the span lives
+								-- inside [row.MinX, row.MaxX], so reads stay in bounds.
+								bcopy(
+									chunk.Buffer, (localY * chunk.Width + localX) * 4,
+									buf, srcRowOffset + (sx - startX) * 4,
+									copyCount * 4
+								)
+
 								if localX < chunk.MinX then chunk.MinX = localX end
-								if localX > chunk.MaxX then chunk.MaxX = localX end
+								if maxLocal > chunk.MaxX then chunk.MaxX = maxLocal end
 								if localY < chunk.MinY then chunk.MinY = localY end
 								if localY > chunk.MaxY then chunk.MaxY = localY end
+
+								sx += copyCount
+							else
+								sx += CHUNK_SIZE - localX -- skip to next chunk boundary
 							end
 						end
-						startDrawX += 1
-						localX += 1
-						if localX >= CHUNK_SIZE then
-							localX = 0
-							chunkX += 1
-							chunk = chunkRow[chunkX]
+					else
+						-- Per-pixel path: handles flipX and interior transparency.
+						local destMinX = if flipX then (w - 1 - row.MaxX) else row.MinX
+						local destMaxX = if flipX then (w - 1 - row.MinX) else row.MaxX
+
+						local startDrawX = startX + destMinX
+						local chunkX = startDrawX // CHUNK_SIZE
+						local localX = startDrawX % CHUNK_SIZE
+						local chunk = chunkRow[chunkX]
+
+						for destX = destMinX, destMaxX do
+							if startDrawX >= screenW then break end
+							if chunk and startDrawX >= 0 then
+								local readX = if flipX then (w - 1 - destX) else destX
+								local src = readu32(buf, srcRowOffset + readX * 4)
+								if src > ALPHA_MASK then
+									writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, src)
+									if localX < chunk.MinX then chunk.MinX = localX end
+									if localX > chunk.MaxX then chunk.MaxX = localX end
+									if localY < chunk.MinY then chunk.MinY = localY end
+									if localY > chunk.MaxY then chunk.MaxY = localY end
+								end
+							end
+							startDrawX += 1
+							localX += 1
+							if localX >= CHUNK_SIZE then
+								localX = 0
+								chunkX += 1
+								chunk = chunkRow[chunkX]
+							end
 						end
 					end
 				end

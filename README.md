@@ -93,7 +93,7 @@ All `Draw` calls operate in **world space** (offset by `Ro2D.Camera`). Colors ar
 | Function | Description |
 | --- | --- |
 | `Draw.Pixel(x, y, r, g, b, a?)` | Write a single pixel. |
-| `Draw.Sprite(x, y, sprite, flipX?, flipY?)` | Blit a compiled sprite, skipping transparent pixels. |
+| `Draw.Sprite(x, y, sprite, flipX?, flipY?)` | Blit a compiled sprite, skipping transparent pixels. Sprites with no interior transparency blit each row as a single `buffer.copy` span. |
 | `Draw.Rect(x, y, w, h, r, g, b, a?)` | Fast filled rectangle (chunk-aware span fills). |
 | `Draw.CircleSDF(x, y, radius, r, g, b, a?)` | Anti-aliased filled circle. |
 | `Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)` | Anti-aliased line. |

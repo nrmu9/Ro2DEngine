@@ -21,6 +21,7 @@ function Assets.LoadSprite(spriteModule: ModuleScript)
 
 	local rowBounds = table.create(h)
 	local isEmpty = true
+	local solidRows = true -- true iff no row has interior transparent pixels
 	local gMinX, gMaxX = w, -1
 	local gMinY, gMaxY = h, -1
 
@@ -51,6 +52,18 @@ function Assets.LoadSprite(spriteModule: ModuleScript)
 			if maxX > gMaxX then gMaxX = maxX end
 			if gMinY == h then gMinY = y end
 			gMaxY = y
+
+			-- If every pixel in [minX, maxX] is opaque, this row is one solid run
+			-- and the renderer can blit it with a single buffer.copy. One hole
+			-- anywhere disqualifies the whole sprite from the fast span path.
+			if solidRows then
+				for x = minX + 1, maxX - 1 do
+					if readu32(buf, rowOffset + x * 4) <= 0xFFFFFF then
+						solidRows = false
+						break
+					end
+				end
+			end
 		end
 
 		rowBounds[y] = { MinX = minX, MaxX = maxX }
@@ -62,6 +75,7 @@ function Assets.LoadSprite(spriteModule: ModuleScript)
 		Buffer = buf,
 		RowBounds = rowBounds,
 		IsEmpty = isEmpty,
+		SolidRows = solidRows,
 
 		HitboxWidth = if isEmpty then 0 else (gMaxX - gMinX + 1),
 		HitboxHeight = if isEmpty then 0 else (gMaxY - gMinY + 1),

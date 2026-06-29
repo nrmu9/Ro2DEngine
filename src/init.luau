@@ -29,6 +29,7 @@ export type Sprite = {
 	Buffer: buffer,
 	RowBounds: { [number]: RowBound },
 	IsEmpty: boolean,
+	SolidRows: boolean,
 	HitboxWidth: number,
 	HitboxHeight: number,
 	HitboxOffsetX: number,
