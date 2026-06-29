@@ -51,7 +51,7 @@ local Ro2D = require(ReplicatedStorage.Ro2DEngine)
 local canvas = script.Parent.CanvasFrame
 Ro2D.System.Init(canvas, {
     Isolate2D = true,
-    RenderScale = 0.5,
+    Resolution = Vector2.new(1024, 576), -- fixed internal resolution (letterboxed); omit for native
     AntiAliasing = false
 })
 

@@ -14,9 +14,8 @@ local Physics = require(script:WaitForChild("Physics"))
 -- =======================================
 export type EngineConfig = {
 	Isolate2D: boolean?,
-	RenderScale: number?,
 	AntiAliasing: boolean?,
-	Resolution: Vector2?, -- fixed internal render resolution (letterboxed); overrides RenderScale
+	Resolution: Vector2?, -- fixed internal render resolution (letterboxed); else native canvas size
 }
 
 export type RowBound = {

@@ -39,7 +39,6 @@ local Renderer = {
 	Camera = { X = 0, Y = 0 },
 	Grid = {
 		ChunksX = 0, ChunksY = 0,
-		Scale = 1,
 		DisplayScale = 1, -- canvas (screen) pixels per one render/buffer pixel
 		OffsetX = 0, OffsetY = 0, -- letterbox offset of the rendered image within the canvas
 		Width = 0, Height = 0, -- render resolution in pixels (cached)
@@ -97,7 +96,7 @@ local function rebuildGrid()
 	local targetWidth, targetHeight, displayScale, baseOffsetX, baseOffsetY
 	if FixedResolution then
 		-- Fixed internal resolution: render exactly this many pixels, then fit into
-		-- the canvas preserving aspect (letterbox). RenderScale is ignored here.
+		-- the canvas preserving aspect (letterbox). Same playfield for every screen.
 		targetWidth = floor(FixedResolution.X)
 		targetHeight = floor(FixedResolution.Y)
 		if targetWidth <= 0 or targetHeight <= 0 then return end
@@ -105,12 +104,10 @@ local function rebuildGrid()
 		baseOffsetX = floor((canvasW - targetWidth * displayScale) * 0.5)
 		baseOffsetY = floor((canvasH - targetHeight * displayScale) * 0.5)
 	else
-		-- Scale mode: render at canvas size * RenderScale and fill the canvas exactly.
-		local scale = Renderer.Grid.Scale
-		targetWidth = floor(canvasW * scale)
-		targetHeight = floor(canvasH * scale)
-		if targetWidth <= 0 or targetHeight <= 0 then return end
-		displayScale = 1 / scale
+		-- No fixed resolution: render at the canvas's native pixel size (1:1).
+		targetWidth = floor(canvasW)
+		targetHeight = floor(canvasH)
+		displayScale = 1
 		baseOffsetX, baseOffsetY = 0, 0
 	end
 
@@ -176,7 +173,6 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 		"[Ro2D] System.Init expects a GuiObject (e.g. a Frame) as the canvas.")
 
 	config = config or {}
-	Renderer.Grid.Scale = clamp(config.RenderScale or 1, 0.1, 1)
 	Renderer.Grid.AntiAliasing = config.AntiAliasing == true
 
 	-- Optional fixed internal resolution: render at exactly this size regardless of
