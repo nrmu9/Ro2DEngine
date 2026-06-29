@@ -1,3 +1,10 @@
+--!optimize 2
+--!native
+-- Ro2D :: Renderer
+-- Chunked software rasterizer that maps contiguous RGBA buffers onto EditableImages.
+-- Uses dirty-region tracking + a persistent background buffer so only changed pixels
+-- are ever pushed to the GPU, and old sprite positions are auto-erased to the background.
+
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local Players = game:GetService("Players")
@@ -6,96 +13,148 @@ local AssetService = game:GetService("AssetService")
 local Input = require(script.Parent:WaitForChild("Input"))
 local UI = require(script.Parent:WaitForChild("UI"))
 
-local writeu8, readu8, copy, create = buffer.writeu8, buffer.readu8, buffer.copy, buffer.create
+-- Localize hot builtins (fastcall-friendly).
+local writeu32, readu32 = buffer.writeu32, buffer.readu32
+local bcopy, bcreate = buffer.copy, buffer.create
 local floor, sqrt, min, max, clamp = math.floor, math.sqrt, math.min, math.max, math.clamp
-local V2_ZERO = Vector2.zero 
+local Vector2_new = Vector2.new
+local V2_ZERO = Vector2.zero
+
+local CHUNK_SIZE = 1024
+local ALPHA_MASK = 0xFFFFFF -- value > this  <=>  alpha byte > 0 (little-endian RGBA)
+
+type Chunk = {
+	Image: EditableImage,
+	Buffer: buffer,
+	BgBuffer: buffer,
+	Width: number, Height: number,
+	SizeVec: Vector2,
+	MinX: number, MaxX: number, MinY: number, MaxY: number,
+	PrevMinX: number, PrevMaxX: number, PrevMinY: number, PrevMaxY: number,
+}
 
 local Renderer = {
 	System = {},
 	Draw = {},
 	Camera = { X = 0, Y = 0 },
-	Grid = { ChunksX = 0, ChunksY = 0, Scale = 1, AntiAliasing = false, IsReady = false },
-	Resolution = Vector2.new(0, 0)
+	Grid = {
+		ChunksX = 0, ChunksY = 0,
+		Scale = 1,
+		Width = 0, Height = 0, -- scaled canvas resolution in pixels (cached)
+		AntiAliasing = false,
+		IsReady = false,
+	},
+	Resolution = Vector2_new(0, 0),
 }
 
-local CHUNK_SIZE = 1024
-local MAX_BUFFER_SIZE = CHUNK_SIZE * CHUNK_SIZE * 4
-local Chunks = {}
+local Chunks = {}        -- [y][x] -> Chunk  (spatial lookup)
+local ChunkList = {}     -- flat array of Chunk (order-independent iteration)
 local ChunkUIElements = {}
-local CanvasFrame = nil
+local CanvasFrame: Frame? = nil
 local UploadBufferPool = {}
-local ClearCache = {}
 local DeveloperBackgroundCode = nil
 
--- INTERNAL CHUNK LOGIC
-local function ClearMemory()
-	for _, element in ipairs(ChunkUIElements) do element:Destroy() end
-	table.clear(Chunks)
-	table.clear(ChunkUIElements)
+-- =========================================================================
+-- INTERNAL HELPERS
+-- =========================================================================
+
+-- Fills `count` consecutive u32 (pixel) values with `packed`, starting at
+-- byte offset `start`, using exponential doubling memcpys instead of a
+-- per-element loop. Fills ~N bytes in log2(N) native copies.
+local function fillU32(buf: buffer, start: number, count: number, packed: number)
+	if count <= 0 then return end
+	writeu32(buf, start, packed)
+	local filled = 1
+	while filled < count do
+		local n = min(filled, count - filled)
+		bcopy(buf, start + filled * 4, buf, start, n * 4)
+		filled += n
+	end
 end
 
-local function RebuildGrid()
+local function clearMemory()
+	for i = 1, #ChunkUIElements do
+		ChunkUIElements[i]:Destroy()
+	end
+	table.clear(Chunks)
+	table.clear(ChunkList)
+	table.clear(ChunkUIElements)
+	Renderer.Grid.Width = 0
+	Renderer.Grid.Height = 0
+end
+
+local function rebuildGrid()
 	if not CanvasFrame then return end
-	ClearMemory()
+	clearMemory()
 	Renderer.Grid.IsReady = false
 
-	local targetWidth = floor(Renderer.Resolution.X * Renderer.Grid.Scale)
-	local targetHeight = floor(Renderer.Resolution.Y * Renderer.Grid.Scale)
+	local scale = Renderer.Grid.Scale
+	local targetWidth = floor(Renderer.Resolution.X * scale)
+	local targetHeight = floor(Renderer.Resolution.Y * scale)
 	if targetWidth <= 0 or targetHeight <= 0 then return end
+
+	Renderer.Grid.Width = targetWidth
+	Renderer.Grid.Height = targetHeight
 
 	local chunksX = math.ceil(targetWidth / CHUNK_SIZE)
 	local chunksY = math.ceil(targetHeight / CHUNK_SIZE)
 	Renderer.Grid.ChunksX, Renderer.Grid.ChunksY = chunksX, chunksY
 
 	local filterMode = Renderer.Grid.AntiAliasing and Enum.ResamplerMode.Default or Enum.ResamplerMode.Pixelated
+	local invScale = 1 / scale
 
 	for y = 0, chunksY - 1 do
-		Chunks[y] = {}
+		local row = {}
+		Chunks[y] = row
+		local offsetY = y * CHUNK_SIZE
+		local chunkH = min(CHUNK_SIZE, targetHeight - offsetY)
+
 		for x = 0, chunksX - 1 do
 			local offsetX = x * CHUNK_SIZE
-			local offsetY = y * CHUNK_SIZE
 			local chunkW = min(CHUNK_SIZE, targetWidth - offsetX)
-			local chunkH = min(CHUNK_SIZE, targetHeight - offsetY)
-
-			local uiOffsetX = offsetX / Renderer.Grid.Scale
-			local uiOffsetY = offsetY / Renderer.Grid.Scale
-			local uiW = chunkW / Renderer.Grid.Scale
-			local uiH = chunkH / Renderer.Grid.Scale
 
 			local frame = Instance.new("ImageLabel")
 			frame.Name = string.format("Chunk_%d_%d", x, y)
 			frame.BackgroundTransparency = 1
 			frame.BorderSizePixel = 0
-			frame.Position = UDim2.fromOffset(uiOffsetX, uiOffsetY)
-			frame.Size = UDim2.fromOffset(uiW, uiH)
+			frame.Position = UDim2.fromOffset(offsetX * invScale, offsetY * invScale)
+			frame.Size = UDim2.fromOffset(chunkW * invScale, chunkH * invScale)
 			frame.ResampleMode = filterMode
 			frame.Parent = CanvasFrame
 			table.insert(ChunkUIElements, frame)
 
-			local image = AssetService:CreateEditableImage({ Size = Vector2.new(chunkW, chunkH) })
+			local image = AssetService:CreateEditableImage({ Size = Vector2_new(chunkW, chunkH) })
 			frame.ImageContent = Content.fromObject(image)
 
-			Chunks[y][x] = {
+			local bytes = chunkW * chunkH * 4
+			local chunk: Chunk = {
 				Image = image,
-				Buffer = create(chunkW * chunkH * 4),
-				BgBuffer = create(chunkW * chunkH * 4),
+				Buffer = bcreate(bytes),
+				BgBuffer = bcreate(bytes),
 				Width = chunkW, Height = chunkH,
+				SizeVec = Vector2_new(chunkW, chunkH),
 				MinX = chunkW, MaxX = -1, MinY = chunkH, MaxY = -1,
 				PrevMinX = chunkW, PrevMaxX = -1, PrevMinY = chunkH, PrevMaxY = -1,
 			}
+			row[x] = chunk
+			table.insert(ChunkList, chunk)
 		end
 	end
-	
-	UI.Init(CanvasFrame, targetWidth, targetHeight, Renderer.Grid.Scale)
-	
+
+	UI.Init(CanvasFrame, targetWidth, targetHeight, scale)
 	Renderer.Grid.IsReady = true
 end
 
+-- =========================================================================
 -- SYSTEM NAMESPACE
+-- =========================================================================
 function Renderer.System.Init(canvasFrame: Frame, config: any)
+	assert(typeof(canvasFrame) == "Instance" and canvasFrame:IsA("GuiObject"),
+		"[Ro2D] System.Init expects a GuiObject (e.g. a Frame) as the canvas.")
+
 	config = config or {}
 	Renderer.Grid.Scale = clamp(config.RenderScale or 1, 0.1, 1)
-	Renderer.Grid.AntiAliasing = config.AntiAliasing or false
+	Renderer.Grid.AntiAliasing = config.AntiAliasing == true
 
 	if config.Isolate2D then
 		pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
@@ -108,11 +167,11 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 	end
 
 	canvasFrame.ClipsDescendants = true
-	canvasFrame.BackgroundTransparency = 0 
-	canvasFrame.BackgroundColor3 = Color3.new(0, 0, 0) 
+	canvasFrame.BackgroundTransparency = 0
+	canvasFrame.BackgroundColor3 = Color3.new(0, 0, 0)
 	canvasFrame.BorderSizePixel = 0
 	canvasFrame.Active = false
-	canvasFrame.Interactable = false 
+	canvasFrame.Interactable = false
 	for _, child in ipairs(canvasFrame:GetChildren()) do
 		if child:IsA("UILayout") then child:Destroy() end
 	end
@@ -124,72 +183,70 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 
 	local resizeThread = nil
 	local function syncResolution()
-		local currentSize = CanvasFrame.AbsoluteSize
-		if currentSize.X > 0 and currentSize.Y > 0 then
-			Renderer.Resolution = currentSize
-			ClearMemory()
+		local size = (CanvasFrame :: Frame).AbsoluteSize
+		if size.X > 0 and size.Y > 0 then
+			Renderer.Resolution = size
+			clearMemory()
 			Renderer.Grid.IsReady = false
 			if resizeThread then task.cancel(resizeThread) end
-			resizeThread = task.delay(0.05, RebuildGrid)
+			resizeThread = task.delay(0.05, rebuildGrid)
 		end
 	end
 
-	CanvasFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(syncResolution)
-	syncResolution() 
+	canvasFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(syncResolution)
+	syncResolution()
 end
 
-function Renderer.System.ScreenToCanvas(screenX: number, screenY: number)
+function Renderer.System.ScreenToCanvas(screenX: number, screenY: number): (number, number)
 	local scale = Renderer.Grid.Scale
 	return floor(screenX * scale), floor(screenY * scale)
 end
 
 function Renderer.System.SetBackground(callback)
 	DeveloperBackgroundCode = callback
-	if not DeveloperBackgroundCode or not Renderer.Grid.IsReady then return end
+	if not callback or not Renderer.Grid.IsReady then return end
 
-	DeveloperBackgroundCode() 
+	callback()
 
-	for y = 0, Renderer.Grid.ChunksY - 1 do
-		for x = 0, Renderer.Grid.ChunksX - 1 do
-			local chunk = Chunks[y] and Chunks[y][x]
-			if chunk then
-				local len = chunk.Width * chunk.Height * 4
-				copy(chunk.BgBuffer, 0, chunk.Buffer, 0, len)
+	for i = 1, #ChunkList do
+		local chunk = ChunkList[i]
+		local len = chunk.Width * chunk.Height * 4
+		bcopy(chunk.BgBuffer, 0, chunk.Buffer, 0, len)
+		chunk.Image:WritePixelsBuffer(V2_ZERO, chunk.SizeVec, chunk.Buffer)
 
-				if not chunk.FullSizeVector then chunk.FullSizeVector = Vector2.new(chunk.Width, chunk.Height) end
-				chunk.Image:WritePixelsBuffer(V2_ZERO, chunk.FullSizeVector, chunk.Buffer)
-
-				chunk.MinX = chunk.Width; chunk.MaxX = -1
-				chunk.MinY = chunk.Height; chunk.MaxY = -1
-				chunk.PrevMinX = chunk.Width; chunk.PrevMaxX = -1
-				chunk.PrevMinY = chunk.Height; chunk.PrevMaxY = -1
-			end
-		end
+		chunk.MinX = chunk.Width; chunk.MaxX = -1
+		chunk.MinY = chunk.Height; chunk.MaxY = -1
+		chunk.PrevMinX = chunk.Width; chunk.PrevMaxX = -1
+		chunk.PrevMinY = chunk.Height; chunk.PrevMaxY = -1
 	end
 end
 
+-- =========================================================================
 -- DRAW NAMESPACE
-function Renderer.Draw.Pixel(worldX: number, worldY: number, r: number, g: number, b: number, a: number)
-	if not Renderer.Grid.IsReady then return end
+-- =========================================================================
+local Draw = Renderer.Draw
+local Grid = Renderer.Grid
+local Camera = Renderer.Camera
 
-	local screenX = worldX - Renderer.Camera.X
-	local screenY = worldY - Renderer.Camera.Y
-	local scale = Renderer.Grid.Scale
-	local x, y = floor(screenX), floor(screenY)
+function Draw.Pixel(worldX: number, worldY: number, r: number, g: number, b: number, a: number?)
+	if not Grid.IsReady then return end
 
-	if x < 0 or x >= floor(Renderer.Resolution.X * scale) or y < 0 or y >= floor(Renderer.Resolution.Y * scale) then return end
+	local x = floor(worldX - Camera.X)
+	local y = floor(worldY - Camera.Y)
+	if x < 0 or x >= Grid.Width or y < 0 or y >= Grid.Height then return end
 
-	local chunk = Chunks[floor(y / CHUNK_SIZE)] and Chunks[floor(y / CHUNK_SIZE)][floor(x / CHUNK_SIZE)]
+	local chunkRow = Chunks[y // CHUNK_SIZE]
+	if not chunkRow then return end
+	local chunk = chunkRow[x // CHUNK_SIZE]
 	if not chunk then return end
 
-	local localX, localY = x % CHUNK_SIZE, y % CHUNK_SIZE
+	local localX = x % CHUNK_SIZE
+	local localY = y % CHUNK_SIZE
 	if localX >= chunk.Width or localY >= chunk.Height then return end
 
-	local index = ((localY * chunk.Width) + localX) * 4
-	writeu8(chunk.Buffer, index, r)
-	writeu8(chunk.Buffer, index + 1, g)
-	writeu8(chunk.Buffer, index + 2, b)
-	writeu8(chunk.Buffer, index + 3, a or 255)
+	-- Pack RGBA into one u32 (little-endian) and write in a single op.
+	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216
+	writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, packed)
 
 	if localX < chunk.MinX then chunk.MinX = localX end
 	if localX > chunk.MaxX then chunk.MaxX = localX end
@@ -197,61 +254,51 @@ function Renderer.Draw.Pixel(worldX: number, worldY: number, r: number, g: numbe
 	if localY > chunk.MaxY then chunk.MaxY = localY end
 end
 
-function Renderer.Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean?, flipY: boolean?)
-	if not Renderer.Grid.IsReady or sprite.IsEmpty then return end
+function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean?, flipY: boolean?)
+	if not Grid.IsReady or sprite.IsEmpty then return end
 
-	local startX = floor(worldX - Renderer.Camera.X)
-	local startY = floor(worldY - Renderer.Camera.Y)
+	local startX = floor(worldX - Camera.X)
+	local startY = floor(worldY - Camera.Y)
 	local w, h, buf, bounds = sprite.Width, sprite.Height, sprite.Buffer, sprite.RowBounds
-	local scale = Renderer.Grid.Scale
-	local screenW = floor(Renderer.Resolution.X * scale)
-	local screenH = floor(Renderer.Resolution.Y * scale)
+	local screenW, screenH = Grid.Width, Grid.Height
 
 	for y = 0, h - 1 do
-		local readY = flipY and (h - 1 - y) or y
+		local readY = if flipY then (h - 1 - y) else y
 		local row = bounds[readY]
 
 		if row.MinX ~= -1 then
 			local drawY = startY + y
 			if drawY >= 0 and drawY < screenH then
-				local chunkY = floor(drawY / CHUNK_SIZE)
-				local localY = drawY % CHUNK_SIZE
-				local chunkRow = Chunks[chunkY]
-
+				local chunkRow = Chunks[drawY // CHUNK_SIZE]
 				if chunkRow then
-					local srcRowOffset = (readY * w) * 4
-					local destMinX = flipX and (w - 1 - row.MaxX) or row.MinX
-					local destMaxX = flipX and (w - 1 - row.MinX) or row.MaxX
+					local localY = drawY % CHUNK_SIZE
+					local srcRowOffset = readY * w * 4
+					local destMinX = if flipX then (w - 1 - row.MaxX) else row.MinX
+					local destMaxX = if flipX then (w - 1 - row.MinX) else row.MaxX
 
 					local startDrawX = startX + destMinX
-					local chunkX = floor(startDrawX / CHUNK_SIZE)
+					local chunkX = startDrawX // CHUNK_SIZE
 					local localX = startDrawX % CHUNK_SIZE
 					local chunk = chunkRow[chunkX]
 
 					for destX = destMinX, destMaxX do
-						local readX = flipX and (w - 1 - destX) or destX
-						if startDrawX >= 0 and startDrawX < screenW then
-							local index = srcRowOffset + (readX * 4)
-							local a = readu8(buf, index + 3)
-
-							if a > 0 and chunk then
-								local destIndex = ((localY * chunk.Width) + localX) * 4
-								writeu8(chunk.Buffer, destIndex, readu8(buf, index))
-								writeu8(chunk.Buffer, destIndex + 1, readu8(buf, index + 1))
-								writeu8(chunk.Buffer, destIndex + 2, readu8(buf, index + 2))
-								writeu8(chunk.Buffer, destIndex + 3, a)
-
+						if startDrawX >= screenW then break end
+						if chunk and startDrawX >= 0 then
+							local readX = if flipX then (w - 1 - destX) else destX
+							local src = readu32(buf, srcRowOffset + readX * 4)
+							if src > ALPHA_MASK then
+								writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, src)
 								if localX < chunk.MinX then chunk.MinX = localX end
 								if localX > chunk.MaxX then chunk.MaxX = localX end
 								if localY < chunk.MinY then chunk.MinY = localY end
 								if localY > chunk.MaxY then chunk.MaxY = localY end
 							end
 						end
-						startDrawX = startDrawX + 1
-						localX = localX + 1
+						startDrawX += 1
+						localX += 1
 						if localX >= CHUNK_SIZE then
 							localX = 0
-							chunkX = chunkX + 1
+							chunkX += 1
 							chunk = chunkRow[chunkX]
 						end
 					end
@@ -261,94 +308,136 @@ function Renderer.Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX
 	end
 end
 
-function Renderer.Draw.LineSDF(worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number)
-	if not Renderer.Grid.IsReady then return end
+-- Filled, world-space rectangle. Fills contiguous spans with a single packed
+-- color using doubling memcpys, walking across chunk boundaries.
+function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?)
+	if not Grid.IsReady or w <= 0 or h <= 0 then return end
 
-	local x0 = worldX0 - Renderer.Camera.X
-	local y0 = worldY0 - Renderer.Camera.Y
-	local x1 = worldX1 - Renderer.Camera.X
-	local y1 = worldY1 - Renderer.Camera.Y
+	local screenW, screenH = Grid.Width, Grid.Height
+	local x0 = floor(worldX - Camera.X)
+	local y0 = floor(worldY - Camera.Y)
+	local x1 = x0 + w - 1
+	local y1 = y0 + h - 1
+	if x1 < 0 or y1 < 0 or x0 >= screenW or y0 >= screenH then return end
 
-	local halfThick = thickness / 2
+	if x0 < 0 then x0 = 0 end
+	if y0 < 0 then y0 = 0 end
+	if x1 >= screenW then x1 = screenW - 1 end
+	if y1 >= screenH then y1 = screenH - 1 end
+
+	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216
+
+	for y = y0, y1 do
+		local chunkRow = Chunks[y // CHUNK_SIZE]
+		if chunkRow then
+			local localY = y % CHUNK_SIZE
+			local px = x0
+			while px <= x1 do
+				local chunk = chunkRow[px // CHUNK_SIZE]
+				local localX = px % CHUNK_SIZE
+				if chunk then
+					local spanEndLocal = min(chunk.Width - 1, localX + (x1 - px))
+					local count = spanEndLocal - localX + 1
+					fillU32(chunk.Buffer, (localY * chunk.Width + localX) * 4, count, packed)
+
+					if localX < chunk.MinX then chunk.MinX = localX end
+					if spanEndLocal > chunk.MaxX then chunk.MaxX = spanEndLocal end
+					if localY < chunk.MinY then chunk.MinY = localY end
+					if localY > chunk.MaxY then chunk.MaxY = localY end
+
+					px += count
+				else
+					-- skip to next chunk boundary
+					px += (CHUNK_SIZE - localX)
+				end
+			end
+		end
+	end
+end
+
+function Draw.LineSDF(worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number)
+	if not Grid.IsReady then return end
+	local pixel = Draw.Pixel
+	local camX, camY = Camera.X, Camera.Y
+
+	local x0 = worldX0 - camX
+	local y0 = worldY0 - camY
+	local x1 = worldX1 - camX
+	local y1 = worldY1 - camY
+
+	local halfThick = thickness * 0.5
 	local dx, dy = x1 - x0, y1 - y0
-	local lengthSquared = (dx * dx) + (dy * dy)
+	local lenSq = dx * dx + dy * dy
+	local invLenSq = if lenSq > 0 then 1 / lenSq else 0
 
 	local minX = floor(min(x0, x1) - halfThick - 1)
 	local maxX = floor(max(x0, x1) + halfThick + 1)
 	local minY = floor(min(y0, y1) - halfThick - 1)
 	local maxY = floor(max(y0, y1) + halfThick + 1)
+	local edge = halfThick + 1
 
 	for py = minY, maxY do
 		for px = minX, maxX do
-			local t = 0
-			if lengthSquared > 0 then t = max(0, min(1, ((px - x0) * dx + (py - y0) * dy) / lengthSquared)) end
-			local dist = sqrt((px - (x0 + t * dx))^2 + (py - (y0 + t * dy))^2)
+			local t = clamp(((px - x0) * dx + (py - y0) * dy) * invLenSq, 0, 1)
+			local ex = px - (x0 + t * dx)
+			local ey = py - (y0 + t * dy)
+			local dist = sqrt(ex * ex + ey * ey)
 
-			if dist <= halfThick + 1 then
+			if dist <= edge then
 				local a = 255
 				if dist > halfThick then a = floor(255 * (1 - (dist - halfThick))) end
-				if a > 5 then Renderer.Draw.Pixel(px + Renderer.Camera.X, py + Renderer.Camera.Y, r, g, b, a) end
+				if a > 5 then pixel(px + camX, py + camY, r, g, b, a) end
 			end
 		end
 	end
 end
 
-function Renderer.Draw.CircleSDF(worldX: number, worldY: number, radius: number, r: number, g: number, b: number, a: number?)
-	if not Renderer.Grid.IsReady then return end
+-- True anti-aliased circle via signed distance coverage.
+function Draw.CircleSDF(worldX: number, worldY: number, radius: number, r: number, g: number, b: number, a: number?)
+	if not Grid.IsReady or radius <= 0 then return end
 	a = a or 255
+	local pixel = Draw.Pixel
 
-	local startX = floor(worldX - radius)
-	local startY = floor(worldY - radius)
-	local endX = floor(worldX + radius)
-	local endY = floor(worldY + radius)
-
-	local radSq = radius * radius
+	local startX = floor(worldX - radius - 1)
+	local startY = floor(worldY - radius - 1)
+	local endX = floor(worldX + radius + 1)
+	local endY = floor(worldY + radius + 1)
 
 	for py = startY, endY do
+		local dy = py - worldY
+		local dySq = dy * dy
 		for px = startX, endX do
 			local dx = px - worldX
-			local dy = py - worldY
-			if (dx * dx) + (dy * dy) <= radSq then
-				Renderer.Draw.Pixel(px, py, r, g, b, a)
+			local dist = sqrt(dx * dx + dySq)
+			local coverage = radius - dist + 0.5 -- 1 inside, 0 outside, fractional on the edge
+			if coverage > 0 then
+				local pa = if coverage >= 1 then a else floor(a * coverage)
+				if pa > 0 then pixel(px, py, r, g, b, pa) end
 			end
 		end
 	end
 end
 
-function Renderer.Draw.Clear(r: number, g: number, b: number, a: number)
-	if not Renderer.Grid.IsReady then return end
-	a = a or 255
-	local colorKey = string.format("%d_%d_%d_%d", r, g, b, a)
+function Draw.Clear(r: number, g: number, b: number, a: number?)
+	if not Grid.IsReady then return end
+	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216
 
-	if not ClearCache[colorKey] then
-		local temp = create(MAX_BUFFER_SIZE)
-		for i = 0, MAX_BUFFER_SIZE - 1, 4 do
-			writeu8(temp, i, r)
-			writeu8(temp, i+1, g)
-			writeu8(temp, i+2, b)
-			writeu8(temp, i+3, a)
-		end
-		ClearCache[colorKey] = temp
-	end
-
-	for y = 0, Renderer.Grid.ChunksY - 1 do
-		for x = 0, Renderer.Grid.ChunksX - 1 do
-			local chunk = Chunks[y] and Chunks[y][x]
-			if chunk then
-				copy(chunk.Buffer, 0, ClearCache[colorKey], 0, chunk.Width * chunk.Height * 4)
-				chunk.MinX = 0; chunk.MaxX = chunk.Width - 1
-				chunk.MinY = 0; chunk.MaxY = chunk.Height - 1
-			end
-		end
+	for i = 1, #ChunkList do
+		local chunk = ChunkList[i]
+		fillU32(chunk.Buffer, 0, chunk.Width * chunk.Height, packed)
+		chunk.MinX = 0; chunk.MaxX = chunk.Width - 1
+		chunk.MinY = 0; chunk.MaxY = chunk.Height - 1
 	end
 end
 
+-- =========================================================================
 -- GPU AUTO-RENDER LOOP
+-- =========================================================================
 local wasReady = false
 RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, function()
-	if not Renderer.Grid.IsReady then 
+	if not Grid.IsReady then
 		wasReady = false
-		return 
+		return
 	end
 
 	if not wasReady then
@@ -356,63 +445,66 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 		if DeveloperBackgroundCode then Renderer.System.SetBackground(DeveloperBackgroundCode) end
 	end
 
-	for y = 0, Renderer.Grid.ChunksY - 1 do
-		for x = 0, Renderer.Grid.ChunksX - 1 do
-			local chunk = Chunks[y] and Chunks[y][x]
-			if chunk then
-				local hasCurrent = chunk.MinX <= chunk.MaxX
-				local hasPrev = chunk.PrevMinX <= chunk.PrevMaxX
+	for i = 1, #ChunkList do
+		local chunk = ChunkList[i]
+		local cw = chunk.Width
+		local hasCurrent = chunk.MinX <= chunk.MaxX
+		local hasPrev = chunk.PrevMinX <= chunk.PrevMaxX
 
-				if hasCurrent or hasPrev then
-					local uMinX = chunk.Width
-					local uMaxX = -1
-					local uMinY = chunk.Height
-					local uMaxY = -1
+		if hasCurrent or hasPrev then
+			local uMinX, uMaxX = cw, -1
+			local uMinY, uMaxY = chunk.Height, -1
 
-					if hasCurrent then
-						uMinX = min(uMinX, chunk.MinX); uMaxX = max(uMaxX, chunk.MaxX)
-						uMinY = min(uMinY, chunk.MinY); uMaxY = max(uMaxY, chunk.MaxY)
-					end
-					if hasPrev then
-						uMinX = min(uMinX, chunk.PrevMinX); uMaxX = max(uMaxX, chunk.PrevMaxX)
-						uMinY = min(uMinY, chunk.PrevMinY); uMaxY = max(uMaxY, chunk.PrevMaxY)
-					end
+			if hasCurrent then
+				if chunk.MinX < uMinX then uMinX = chunk.MinX end
+				if chunk.MaxX > uMaxX then uMaxX = chunk.MaxX end
+				if chunk.MinY < uMinY then uMinY = chunk.MinY end
+				if chunk.MaxY > uMaxY then uMaxY = chunk.MaxY end
+			end
+			if hasPrev then
+				if chunk.PrevMinX < uMinX then uMinX = chunk.PrevMinX end
+				if chunk.PrevMaxX > uMaxX then uMaxX = chunk.PrevMaxX end
+				if chunk.PrevMinY < uMinY then uMinY = chunk.PrevMinY end
+				if chunk.PrevMaxY > uMaxY then uMaxY = chunk.PrevMaxY end
+			end
 
-					local rectW = uMaxX - uMinX + 1
-					local rectH = uMaxY - uMinY + 1
+			local rectW = uMaxX - uMinX + 1
+			local rectH = uMaxY - uMinY + 1
+			local buf = chunk.Buffer
 
-					if rectW == chunk.Width and rectH == chunk.Height then
-						if not chunk.FullSizeVector then chunk.FullSizeVector = Vector2.new(chunk.Width, chunk.Height) end
-						chunk.Image:WritePixelsBuffer(V2_ZERO, chunk.FullSizeVector, chunk.Buffer)
-					else
-						local requiredBytes = rectW * rectH * 4
-						local tempBuf = UploadBufferPool[requiredBytes]
-						if not tempBuf then
-							tempBuf = create(requiredBytes)
-							UploadBufferPool[requiredBytes] = tempBuf
-						end
+			if rectW == cw and rectH == chunk.Height then
+				chunk.Image:WritePixelsBuffer(V2_ZERO, chunk.SizeVec, buf)
+			else
+				local requiredBytes = rectW * rectH * 4
+				local tempBuf = UploadBufferPool[requiredBytes]
+				if not tempBuf then
+					tempBuf = bcreate(requiredBytes)
+					UploadBufferPool[requiredBytes] = tempBuf
+				end
 
-						for row = 0, rectH - 1 do
-							local srcOffset = (((uMinY + row) * chunk.Width) + uMinX) * 4
-							copy(tempBuf, (row * rectW) * 4, chunk.Buffer, srcOffset, rectW * 4)
-						end
-						chunk.Image:WritePixelsBuffer(Vector2.new(uMinX, uMinY), Vector2.new(rectW, rectH), tempBuf)
-					end
+				local rowBytes = rectW * 4
+				for row = 0, rectH - 1 do
+					bcopy(tempBuf, row * rowBytes, buf, ((uMinY + row) * cw + uMinX) * 4, rowBytes)
+				end
+				chunk.Image:WritePixelsBuffer(Vector2_new(uMinX, uMinY), Vector2_new(rectW, rectH), tempBuf)
+			end
 
-					if hasCurrent then
-						for row = chunk.MinY, chunk.MaxY do
-							local offset = (((row * chunk.Width) + chunk.MinX) * 4)
-							local len = (chunk.MaxX - chunk.MinX + 1) * 4
-							copy(chunk.Buffer, offset, chunk.BgBuffer, offset, len)
-						end
-					end
-
-					chunk.PrevMinX = chunk.MinX; chunk.PrevMaxX = chunk.MaxX
-					chunk.PrevMinY = chunk.MinY; chunk.PrevMaxY = chunk.MaxY
-					chunk.MinX = chunk.Width; chunk.MaxX = -1
-					chunk.MinY = chunk.Height; chunk.MaxY = -1
+			-- Restore the background into the region we just drew so the next frame
+			-- starts clean (auto-erase). BgBuffer is zero by default, or the snapshot
+			-- captured by System.SetBackground.
+			if hasCurrent then
+				local bg = chunk.BgBuffer
+				local copyBytes = (chunk.MaxX - chunk.MinX + 1) * 4
+				for row = chunk.MinY, chunk.MaxY do
+					local offset = (row * cw + chunk.MinX) * 4
+					bcopy(buf, offset, bg, offset, copyBytes)
 				end
 			end
+
+			chunk.PrevMinX = chunk.MinX; chunk.PrevMaxX = chunk.MaxX
+			chunk.PrevMinY = chunk.MinY; chunk.PrevMaxY = chunk.MaxY
+			chunk.MinX = cw; chunk.MaxX = -1
+			chunk.MinY = chunk.Height; chunk.MaxY = -1
 		end
 	end
 

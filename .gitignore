@@ -8,3 +8,7 @@
 /*.rbxl.lock
 
 sourcemap.json
+
+# pycache
+__pycache__/
+*.pyc

@@ -6,10 +6,12 @@ I built this for developers who want a completely isolated 2D environment inside
 
 ## Features
 
-* **Zero-Allocation Rendering:** The engine recycles upload buffers using an internal memory pool to completely eliminate Garbage Collection (GC) spikes during the render loop.
-* **Dirty Region Optimization:** The canvas is split into spatial chunks. Instead of wiping and redrawing the entire screen every frame, Ro2D tracks the min/max bounds of modified pixels and only pushes the exact dirty rectangles to the GPU.
+* **Zero-Allocation Rendering:** The engine recycles upload buffers using an internal memory pool to completely eliminate Garbage Collection (GC) spikes during the render loop. Pixels are read and written 32 bits at a time (one RGBA value per buffer op) instead of byte-by-byte.
+* **Dirty Region Optimization:** The canvas is split into spatial chunks. Instead of wiping and redrawing the entire screen every frame, Ro2D tracks the min/max bounds of modified pixels and only pushes the exact dirty rectangles to the GPU. The UI overlay layer uses the same sub-rectangle upload strategy.
+* **Auto-Erase Background Buffer:** Each chunk keeps a persistent background snapshot. After uploading a frame, the dirty region is restored to the background, so moving sprites erase their old positions automatically — you don't need to clear the screen unless you want to.
+* **Fast Clear & Fill:** `Draw.Clear` and `Draw.Rect` fill memory using exponential-doubling `buffer.copy` (log-time native memcpys) rather than per-pixel loops.
 * **Built-in Physics & World Management:** Out-of-the-box support for AABB collision detection, radial orbital physics, and gravity application.
-* **SDF Primitives:** Draw circles and lines using Signed Distance Fields for smooth, anti-aliased sub-pixel rendering.
+* **True SDF Primitives:** Draw circles and lines using Signed Distance Fields for smooth, anti-aliased sub-pixel edges.
 
 ## The Asset Pipeline: `png2lua`
 
@@ -83,6 +85,21 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 ```
+
+## Drawing API
+
+All `Draw` calls operate in **world space** (offset by `Ro2D.Camera`). Colors are `0–255` integers; alpha is optional and defaults to `255`.
+
+| Function | Description |
+| --- | --- |
+| `Draw.Pixel(x, y, r, g, b, a?)` | Write a single pixel. |
+| `Draw.Sprite(x, y, sprite, flipX?, flipY?)` | Blit a compiled sprite, skipping transparent pixels. |
+| `Draw.Rect(x, y, w, h, r, g, b, a?)` | Fast filled rectangle (chunk-aware span fills). |
+| `Draw.CircleSDF(x, y, radius, r, g, b, a?)` | Anti-aliased filled circle. |
+| `Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)` | Anti-aliased line. |
+| `Draw.Clear(r, g, b, a?)` | Fill the whole canvas. |
+
+`Ro2D.Assets.LoadSprite` caches its result per `ModuleScript`, so requiring the same sprite repeatedly is free after the first decode.
 
 ## Disclaimer regarding UI
 

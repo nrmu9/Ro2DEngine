@@ -1,11 +1,13 @@
-local Core = script.Parent.Parent:WaitForChild("Core")
+--!optimize 2
+-- Ro2D Engine :: public entry point.
+-- Modules are flat children of this ModuleScript (see default.project.json / sourcemap.json).
 
-local Renderer = require(Core:WaitForChild("Renderer"))
-local Assets = require(Core:WaitForChild("Assets"))
-local World = require(Core:WaitForChild("World"))
-local Input = require(Core:WaitForChild("Input"))
-local UI = require(Core:WaitForChild("UI"))
-local Physics = require(Core:WaitForChild("Physics"))
+local Renderer = require(script:WaitForChild("Renderer"))
+local Assets = require(script:WaitForChild("Assets"))
+local World = require(script:WaitForChild("World"))
+local Input = require(script:WaitForChild("Input"))
+local UI = require(script:WaitForChild("UI"))
+local Physics = require(script:WaitForChild("Physics"))
 
 -- =======================================
 -- ENGINE TYPES
@@ -13,32 +15,32 @@ local Physics = require(Core:WaitForChild("Physics"))
 export type EngineConfig = {
 	Isolate2D: boolean?,
 	RenderScale: number?,
-	AntiAliasing: boolean?
+	AntiAliasing: boolean?,
 }
 
 export type RowBound = {
 	MinX: number,
-	MaxX: number
+	MaxX: number,
 }
 
 export type Sprite = {
 	Width: number,
 	Height: number,
 	Buffer: buffer,
-	RowBounds: {[number]: RowBound},
+	RowBounds: { [number]: RowBound },
 	IsEmpty: boolean,
 	HitboxWidth: number,
 	HitboxHeight: number,
 	HitboxOffsetX: number,
 	HitboxOffsetY: number,
-	HitboxMaxX: number
+	HitboxMaxX: number,
 }
 
 export type Hitbox = {
 	X: number,
 	Y: number,
 	Width: number,
-	Height: number
+	Height: number,
 }
 
 export type PhysicsMode = "AABB" | "Radial"
@@ -49,15 +51,15 @@ export type Entity = {
 	X: number, Y: number,
 	VelocityX: number, VelocityY: number,
 	Gravity: number?, IsGrounded: boolean?,
-	HitboxRadius: number?,       
+	HitboxRadius: number?,
 	PhysicsMode: PhysicsMode?,
-	RadialTarget: RadialTarget?, 
+	RadialTarget: RadialTarget?,
 	Sprite: Sprite?,
 	FlipX: boolean, FlipY: boolean,
 	Visible: boolean,
 	OnUpdate: ((self: Entity, dt: number) -> ())?,
-	OnDraw: ((self: Entity) -> ())?, 
-	Destroy: (self: Entity) -> ()
+	OnDraw: ((self: Entity) -> ())?,
+	Destroy: (self: Entity) -> (),
 }
 
 export type PhysicsEntity = {
@@ -65,107 +67,121 @@ export type PhysicsEntity = {
 	VelocityX: number?, VelocityY: number?,
 	Gravity: number?, IsGrounded: boolean?,
 	HitboxWidth: number?, HitboxHeight: number?, HitboxRadius: number?,
-	Sprite: { Width: number, Height: number }? 
+	Sprite: { Width: number, Height: number }?,
 }
 
-local EngineEnums = {
-	PhysicsMode = {
+local EngineEnums = table.freeze({
+	PhysicsMode = table.freeze({
 		AABB = "AABB",
-		Radial = "Radial"
-	}
-}
-
-table.freeze(EngineEnums.PhysicsMode)
-table.freeze(EngineEnums)
+		Radial = "Radial",
+	}),
+})
 
 export type Ro2DAPI = {
 	System: {
-		Init: (canvasFrame: Frame, config: EngineConfig?) -> (),
+		Init: (canvasFrame: GuiObject, config: EngineConfig?) -> (),
 		ScreenToCanvas: (screenX: number, screenY: number) -> (number, number),
-		SetBackground: (callback: () -> ()) -> ()
+		SetBackground: (callback: () -> ()) -> (),
 	},
 	Draw: {
 		Pixel: (worldX: number, worldY: number, r: number, g: number, b: number, a: number?) -> (),
 		Sprite: (worldX: number, worldY: number, sprite: Sprite, flipX: boolean?, flipY: boolean?) -> (),
+		Rect: (worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?) -> (),
 		LineSDF: (worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number) -> (),
 		CircleSDF: (worldX: number, worldY: number, radius: number, r: number, g: number, b: number, a: number?) -> (),
-		Clear: (r: number, g: number, b: number, a: number?) -> ()
+		Clear: (r: number, g: number, b: number, a: number?) -> (),
 	},
 	Assets: {
-		LoadSprite: (spriteModule: ModuleScript) -> Sprite
+		LoadSprite: (spriteModule: ModuleScript) -> Sprite,
 	},
 	World: {
 		Spawn: (x: number, y: number, sprite: Sprite?) -> Entity,
 		AddHitbox: (x: number, y: number, w: number, h: number) -> Hitbox,
 		UpdateAll: (dt: number) -> (),
 		DrawAll: () -> (),
-		Clear: () -> ()
+		Clear: () -> (),
 	},
 	Physics: {
 		Gravity: number,
 		CheckAABB: (x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number) -> boolean,
 		GetDistance: (x1: number, y1: number, x2: number, y2: number) -> (number, number, number),
-		UpdateRadialEntity: (entity: PhysicsEntity, targetX: number, targetY: number, targetRadius: number, dt: number) -> ()
+		UpdateRadialEntity: (entity: PhysicsEntity, targetX: number, targetY: number, targetRadius: number, dt: number) -> (),
 	},
 	Input: {
 		IsKeyDown: (keyCode: Enum.KeyCode) -> boolean,
 		IsKeyPressed: (keyCode: Enum.KeyCode) -> boolean,
 		GetMousePosition: () -> (number, number),
 		IsMouseDown: (button: number) -> boolean,
-		GetScrollDelta: () -> number
+		GetScrollDelta: () -> number,
 	},
 	UI: {
 		Clear: () -> (),
-		DrawFrame: (screenX: number, screenY: number, w: number, h: number, r: number, g: number, b: number, a: number?) -> ()
+		DrawFrame: (screenX: number, screenY: number, w: number, h: number, r: number, g: number, b: number, a: number?) -> (),
 	},
 	Enums: {
-		PhysicsMode: {
-			AABB: string,
-			Radial: string
-		}
+		PhysicsMode: { AABB: string, Radial: string },
 	},
 	Camera: { X: number, Y: number },
 	Width: number,
 	Height: number,
-	IsReady: boolean
+	IsReady: boolean,
 }
 
 -- =======================================
 -- PUBLIC API
 -- =======================================
-local API = {
+local Grid = Renderer.Grid
+local mouse = Input.Mouse
+local keysDown = Input.KeysDown
+local keysPressed = Input.KeysPressedThisFrame
+local drawSprite = Renderer.Draw.Sprite
+
+local Ro2D = {
 	System = Renderer.System,
 	Draw = Renderer.Draw,
 	Camera = Renderer.Camera,
 	Assets = Assets,
 	Physics = Physics,
+	UI = UI,
+	Enums = EngineEnums,
+
 	World = {
 		Spawn = World.Spawn,
 		AddHitbox = World.AddHitbox,
 		UpdateAll = World.UpdateAll,
-		DrawAll = function() World.DrawAll(Renderer.Draw.Sprite) end,
-		Clear = World.Clear
+		DrawAll = function() World.DrawAll(drawSprite) end,
+		Clear = World.Clear,
 	},
+
 	Input = {
-		IsKeyDown = function(k) return Input.KeysDown[k] or false end,
-		IsKeyPressed = function(k) return Input.KeysPressedThisFrame[k] or false end,
-		GetMousePosition = function() return math.floor(Input.Mouse.X * Renderer.Grid.Scale), math.floor(Input.Mouse.Y * Renderer.Grid.Scale) end,
-		IsMouseDown = function(b) return (b == 1 and Input.Mouse.LeftDown) or (b == 2 and Input.Mouse.RightDown) or false end,
-		GetScrollDelta = function() return Input.Mouse.ScrollDelta end
+		IsKeyDown = function(k) return keysDown[k] == true end,
+		IsKeyPressed = function(k) return keysPressed[k] == true end,
+		GetMousePosition = function()
+			local scale = Grid.Scale
+			return math.floor(mouse.X * scale), math.floor(mouse.Y * scale)
+		end,
+		IsMouseDown = function(b)
+			return (b == 1 and mouse.LeftDown) or (b == 2 and mouse.RightDown) or false
+		end,
+		GetScrollDelta = function() return mouse.ScrollDelta end,
 	},
-	UI = UI,
-	Enums = EngineEnums
 }
 
-local PublicProxy = setmetatable({}, {
+-- Static namespaces are real fields (raw, fast access). Only the three live scalars
+-- are resolved dynamically, and any stray write is rejected to catch typos early.
+local proxy = setmetatable({}, {
 	__index = function(_, key)
-		if API[key] then return API[key] end
-		if key == "Width" then return math.floor(Renderer.Resolution.X * Renderer.Grid.Scale) end
-		if key == "Height" then return math.floor(Renderer.Resolution.Y * Renderer.Grid.Scale) end
-		if key == "IsReady" then return Renderer.Grid.IsReady end
+		local v = Ro2D[key]
+		if v ~= nil then return v end
+		if key == "Width" then return Grid.Width end
+		if key == "Height" then return Grid.Height end
+		if key == "IsReady" then return Grid.IsReady end
 		return nil
 	end,
-	__newindex = function(_, key, _) warn("[Ro2DEngine] Read-Only property.") end
+	__newindex = function(_, key)
+		error(`[Ro2D] '{key}' is read-only.`, 2)
+	end,
+	__metatable = "Locked",
 })
 
-return PublicProxy :: Ro2DAPI
+return proxy :: Ro2DAPI

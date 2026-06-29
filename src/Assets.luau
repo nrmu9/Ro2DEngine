@@ -1,54 +1,77 @@
+--!optimize 2
+--!native
+-- Ro2D :: Assets
+-- Decodes png2lua-compiled sprite modules into GPU-ready RGBA buffers, precomputing
+-- per-row opaque bounds so the renderer can skip transparent pixels at draw time.
+
+local readu32 = buffer.readu32
+local fromstring = buffer.fromstring
+
 local Assets = {}
 
+local cache = setmetatable({}, { __mode = "k" }) -- weak keys: module -> Sprite
+
 function Assets.LoadSprite(spriteModule: ModuleScript)
-	local data = require(spriteModule)
-	local memBuffer = buffer.fromstring(data.Data)
-	local w = data.Width
-	local h = data.Height
+	local cached = cache[spriteModule]
+	if cached then return cached end
 
-	local rowBounds = {}
+	local data = require(spriteModule) :: any
+	local buf = fromstring(data.Data)
+	local w, h = data.Width, data.Height
+
+	local rowBounds = table.create(h)
 	local isEmpty = true
-
-	local globalMinX, globalMaxX = w, -1
-	local globalMinY, globalMaxY = h, -1
+	local gMinX, gMaxX = w, -1
+	local gMinY, gMaxY = h, -1
 
 	for y = 0, h - 1 do
-		local minX = -1
-		local maxX = -1
-		local rowOffset = (y * w) * 4
+		local rowOffset = y * w * 4
+		local minX, maxX = -1, -1
 
+		-- Scan inward from both ends; stop as soon as an opaque pixel is found.
+		-- A pixel's alpha is the high byte of its little-endian u32, so
+		-- (value > 0xFFFFFF) is true iff alpha > 0.
 		for x = 0, w - 1 do
-			local alpha = buffer.readu8(memBuffer, rowOffset + (x * 4) + 3)
-			if alpha > 0 then
-				if minX == -1 then minX = x end
-				maxX = x
+			if readu32(buf, rowOffset + x * 4) > 0xFFFFFF then
+				minX = x
+				break
 			end
 		end
 
-		rowBounds[y] = { MinX = minX, MaxX = maxX }
+		if minX ~= -1 then
+			for x = w - 1, minX, -1 do
+				if readu32(buf, rowOffset + x * 4) > 0xFFFFFF then
+					maxX = x
+					break
+				end
+			end
 
-		if minX ~= -1 then 
-			isEmpty = false 
-			if minX < globalMinX then globalMinX = minX end
-			if maxX > globalMaxX then globalMaxX = maxX end
-			if globalMinY == h then globalMinY = y end
-			globalMaxY = y
+			isEmpty = false
+			if minX < gMinX then gMinX = minX end
+			if maxX > gMaxX then gMaxX = maxX end
+			if gMinY == h then gMinY = y end
+			gMaxY = y
 		end
+
+		rowBounds[y] = { MinX = minX, MaxX = maxX }
 	end
 
-	return {
+	local sprite = {
 		Width = w,
 		Height = h,
-		Buffer = memBuffer,
+		Buffer = buf,
 		RowBounds = rowBounds,
 		IsEmpty = isEmpty,
 
-		HitboxWidth = isEmpty and 0 or (globalMaxX - globalMinX + 1),
-		HitboxHeight = isEmpty and 0 or (globalMaxY - globalMinY + 1),
-		HitboxOffsetX = isEmpty and 0 or globalMinX,
-		HitboxOffsetY = isEmpty and 0 or globalMinY,
-		HitboxMaxX = isEmpty and 0 or globalMaxX
+		HitboxWidth = if isEmpty then 0 else (gMaxX - gMinX + 1),
+		HitboxHeight = if isEmpty then 0 else (gMaxY - gMinY + 1),
+		HitboxOffsetX = if isEmpty then 0 else gMinX,
+		HitboxOffsetY = if isEmpty then 0 else gMinY,
+		HitboxMaxX = if isEmpty then 0 else gMaxX,
 	}
+
+	cache[spriteModule] = sprite
+	return sprite
 end
 
 return Assets

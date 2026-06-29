@@ -1,17 +1,41 @@
+--!optimize 2
+--!native
+-- Ro2D :: UI
+-- Persistent overlay layer rendered above the world. Unlike the world buffers it is
+-- not auto-cleared each frame; it tracks dirty sub-rectangles so Flush only uploads
+-- the pixels that actually changed since the last frame.
+
 local AssetService = game:GetService("AssetService")
 
 local floor, max, min = math.floor, math.max, math.min
 local writeu8, readu8 = buffer.writeu8, buffer.readu8
+local writeu32 = buffer.writeu32
+local bcreate, bfill, bcopy = buffer.create, buffer.fill, buffer.copy
+local Vector2_new = Vector2.new
+
+local CHUNK_SIZE = 1024
 
 local UI = {
 	LayerFrame = nil,
-	Chunks = {},
-	ChunkFrames = {},
+	Chunks = {},     -- [y][x] -> chunk
+	ChunkList = {},  -- flat array
 	Width = 0,
 	Height = 0,
 	IsReady = false,
-	CHUNK_SIZE = 1024 
+	CHUNK_SIZE = CHUNK_SIZE,
 }
+
+local UploadBufferPool = {}
+
+local function markFull(chunk)
+	chunk.MinX = 0; chunk.MaxX = chunk.Width - 1
+	chunk.MinY = 0; chunk.MaxY = chunk.Height - 1
+end
+
+local function resetDirty(chunk)
+	chunk.MinX = chunk.Width; chunk.MaxX = -1
+	chunk.MinY = chunk.Height; chunk.MaxY = -1
+end
 
 function UI.Init(parentLayer: Frame, screenW: number, screenH: number, renderScale: number)
 	UI.IsReady = false
@@ -20,54 +44,56 @@ function UI.Init(parentLayer: Frame, screenW: number, screenH: number, renderSca
 	UI.Width = screenW
 	UI.Height = screenH
 	table.clear(UI.Chunks)
-	table.clear(UI.ChunkFrames)
+	table.clear(UI.ChunkList)
 
-	UI.LayerFrame = Instance.new("Frame")
-	UI.LayerFrame.Name = "SoftwareUIBuffer"
-	UI.LayerFrame.BackgroundTransparency = 1
-	UI.LayerFrame.Size = UDim2.fromScale(1, 1)
-	UI.LayerFrame.ZIndex = 100 
-	UI.LayerFrame.Parent = parentLayer
+	local layer = Instance.new("Frame")
+	layer.Name = "SoftwareUIBuffer"
+	layer.BackgroundTransparency = 1
+	layer.Size = UDim2.fromScale(1, 1)
+	layer.ZIndex = 100
+	layer.Parent = parentLayer
+	UI.LayerFrame = layer
 
-	local chunksX = math.ceil(screenW / UI.CHUNK_SIZE)
-	local chunksY = math.ceil(screenH / UI.CHUNK_SIZE)
+	local chunksX = math.ceil(screenW / CHUNK_SIZE)
+	local chunksY = math.ceil(screenH / CHUNK_SIZE)
+	local invScale = 1 / renderScale
 
 	for y = 0, chunksY - 1 do
-		UI.Chunks[y] = {}
-		for x = 0, chunksX - 1 do
-			local chunkW = min(UI.CHUNK_SIZE, screenW - (x * UI.CHUNK_SIZE))
-			local chunkH = min(UI.CHUNK_SIZE, screenH - (y * UI.CHUNK_SIZE))
+		local row = {}
+		UI.Chunks[y] = row
+		local offsetY = y * CHUNK_SIZE
+		local chunkH = min(CHUNK_SIZE, screenH - offsetY)
 
-			local uiOffsetX = (x * UI.CHUNK_SIZE) / renderScale
-			local uiOffsetY = (y * UI.CHUNK_SIZE) / renderScale
-			local uiW = chunkW / renderScale
-			local uiH = chunkH / renderScale
+		for x = 0, chunksX - 1 do
+			local offsetX = x * CHUNK_SIZE
+			local chunkW = min(CHUNK_SIZE, screenW - offsetX)
 
 			local frame = Instance.new("ImageLabel")
 			frame.Name = string.format("UIChunk_%d_%d", x, y)
 			frame.BackgroundTransparency = 1
 			frame.BorderSizePixel = 0
-			frame.Position = UDim2.fromOffset(uiOffsetX, uiOffsetY)
-			frame.Size = UDim2.fromOffset(uiW, uiH)
+			frame.Position = UDim2.fromOffset(offsetX * invScale, offsetY * invScale)
+			frame.Size = UDim2.fromOffset(chunkW * invScale, chunkH * invScale)
 			frame.ResampleMode = Enum.ResamplerMode.Pixelated
-			frame.Parent = UI.LayerFrame
-			table.insert(UI.ChunkFrames, frame)
+			frame.Parent = layer
 
-			local image = AssetService:CreateEditableImage({ Size = Vector2.new(chunkW, chunkH) })
+			local image = AssetService:CreateEditableImage({ Size = Vector2_new(chunkW, chunkH) })
 			frame.ImageContent = Content.fromObject(image)
 
 			local byteSize = chunkW * chunkH * 4
-			local buf = buffer.create(byteSize)
-			buffer.fill(buf, 0, 0, byteSize) 
+			local buf = bcreate(byteSize) -- zero-initialized
 
-			UI.Chunks[y][x] = {
+			local chunk = {
 				Image = image,
 				Buffer = buf,
 				Width = chunkW,
 				Height = chunkH,
 				ByteSize = byteSize,
-				IsDirty = false
+				SizeVec = Vector2_new(chunkW, chunkH),
+				MinX = chunkW, MaxX = -1, MinY = chunkH, MaxY = -1,
 			}
+			row[x] = chunk
+			table.insert(UI.ChunkList, chunk)
 		end
 	end
 
@@ -76,18 +102,17 @@ end
 
 function UI.Clear()
 	if not UI.IsReady then return end
-	for y, row in pairs(UI.Chunks) do
-		for x, chunk in pairs(row) do
-			buffer.fill(chunk.Buffer, 0, 0, chunk.ByteSize)
-			chunk.IsDirty = true
-		end
+	for i = 1, #UI.ChunkList do
+		local chunk = UI.ChunkList[i]
+		bfill(chunk.Buffer, 0, 0, chunk.ByteSize)
+		markFull(chunk)
 	end
 end
 
-function UI.DrawFrame(screenX: number, screenY: number, w: number, h: number, r: number, g: number, b: number, a: number)
+function UI.DrawFrame(screenX: number, screenY: number, w: number, h: number, r: number, g: number, b: number, a: number?)
 	if not UI.IsReady then return end
 	a = a or 255
-	if a == 0 then return end
+	if a == 0 or w <= 0 or h <= 0 then return end
 
 	local startX = floor(screenX)
 	local startY = floor(screenY)
@@ -96,58 +121,67 @@ function UI.DrawFrame(screenX: number, screenY: number, w: number, h: number, r:
 
 	if startX >= UI.Width or startY >= UI.Height or endX < 0 or endY < 0 then return end
 
-	startX = max(0, startX)
-	startY = max(0, startY)
-	endX = min(UI.Width - 1, endX)
-	endY = min(UI.Height - 1, endY)
+	if startX < 0 then startX = 0 end
+	if startY < 0 then startY = 0 end
+	if endX >= UI.Width then endX = UI.Width - 1 end
+	if endY >= UI.Height then endY = UI.Height - 1 end
 
+	local opaque = a == 255
+	local packed = r + g * 256 + b * 65536 + 255 * 16777216
 	local alphaRatio = a / 255
 	local invAlpha = 1 - alphaRatio
 
-	local startChunkX = floor(startX / UI.CHUNK_SIZE)
-	local endChunkX = floor(endX / UI.CHUNK_SIZE)
-	local startChunkY = floor(startY / UI.CHUNK_SIZE)
-	local endChunkY = floor(endY / UI.CHUNK_SIZE)
+	local startChunkX = startX // CHUNK_SIZE
+	local endChunkX = endX // CHUNK_SIZE
+	local startChunkY = startY // CHUNK_SIZE
+	local endChunkY = endY // CHUNK_SIZE
 
 	for cy = startChunkY, endChunkY do
-		for cx = startChunkX, endChunkX do
-			local chunk = UI.Chunks[cy] and UI.Chunks[cy][cx]
-			if chunk then
-				chunk.IsDirty = true
+		local chunkRowTbl = UI.Chunks[cy]
+		if chunkRowTbl then
+			local chunkBaseY = cy * CHUNK_SIZE
+			for cx = startChunkX, endChunkX do
+				local chunk = chunkRowTbl[cx]
+				if chunk then
+					local chunkBaseX = cx * CHUNK_SIZE
+					local lsx = max(startX, chunkBaseX) - chunkBaseX
+					local lex = min(endX, chunkBaseX + chunk.Width - 1) - chunkBaseX
+					local lsy = max(startY, chunkBaseY) - chunkBaseY
+					local ley = min(endY, chunkBaseY + chunk.Height - 1) - chunkBaseY
 
-				local cStartX = max(startX, cx * UI.CHUNK_SIZE) - (cx * UI.CHUNK_SIZE)
-				local cEndX = min(endX, (cx + 1) * UI.CHUNK_SIZE - 1) - (cx * UI.CHUNK_SIZE)
-				local cStartY = max(startY, cy * UI.CHUNK_SIZE) - (cy * UI.CHUNK_SIZE)
-				local cEndY = min(endY, (cy + 1) * UI.CHUNK_SIZE - 1) - (cy * UI.CHUNK_SIZE)
+					local buf = chunk.Buffer
+					local cw = chunk.Width
 
-				for py = cStartY, cEndY do
-					local rowOffset = py * chunk.Width
-					for px = cStartX, cEndX do
-						local index = (rowOffset + px) * 4
-
-						if a == 255 then
-							writeu8(chunk.Buffer, index, r)
-							writeu8(chunk.Buffer, index + 1, g)
-							writeu8(chunk.Buffer, index + 2, b)
-							writeu8(chunk.Buffer, index + 3, 255)
+					for py = lsy, ley do
+						local rowBase = py * cw
+						if opaque then
+							for px = lsx, lex do
+								writeu32(buf, (rowBase + px) * 4, packed)
+							end
 						else
-							local bgA = readu8(chunk.Buffer, index + 3)
-							if bgA == 0 then
-								writeu8(chunk.Buffer, index, r)
-								writeu8(chunk.Buffer, index + 1, g)
-								writeu8(chunk.Buffer, index + 2, b)
-								writeu8(chunk.Buffer, index + 3, a)
-							else
-								local bgR = readu8(chunk.Buffer, index)
-								local bgG = readu8(chunk.Buffer, index + 1)
-								local bgB = readu8(chunk.Buffer, index + 2)
-								writeu8(chunk.Buffer, index, floor((r * alphaRatio) + (bgR * invAlpha)))
-								writeu8(chunk.Buffer, index + 1, floor((g * alphaRatio) + (bgG * invAlpha)))
-								writeu8(chunk.Buffer, index + 2, floor((b * alphaRatio) + (bgB * invAlpha)))
-								writeu8(chunk.Buffer, index + 3, max(bgA, a)) 
+							for px = lsx, lex do
+								local index = (rowBase + px) * 4
+								local bgA = readu8(buf, index + 3)
+								if bgA == 0 then
+									writeu8(buf, index, r)
+									writeu8(buf, index + 1, g)
+									writeu8(buf, index + 2, b)
+									writeu8(buf, index + 3, a)
+								else
+									writeu8(buf, index, floor(r * alphaRatio + readu8(buf, index) * invAlpha))
+									writeu8(buf, index + 1, floor(g * alphaRatio + readu8(buf, index + 1) * invAlpha))
+									writeu8(buf, index + 2, floor(b * alphaRatio + readu8(buf, index + 2) * invAlpha))
+									writeu8(buf, index + 3, max(bgA, a))
+								end
 							end
 						end
 					end
+
+					-- Expand the chunk's dirty rectangle.
+					if lsx < chunk.MinX then chunk.MinX = lsx end
+					if lex > chunk.MaxX then chunk.MaxX = lex end
+					if lsy < chunk.MinY then chunk.MinY = lsy end
+					if ley > chunk.MaxY then chunk.MaxY = ley end
 				end
 			end
 		end
@@ -157,12 +191,32 @@ end
 function UI.Flush()
 	if not UI.IsReady then return end
 
-	for y, row in pairs(UI.Chunks) do
-		for x, chunk in pairs(row) do
-			if chunk.IsDirty then
-				chunk.Image:WritePixelsBuffer(Vector2.zero, Vector2.new(chunk.Width, chunk.Height), chunk.Buffer)
-				chunk.IsDirty = false 
+	for i = 1, #UI.ChunkList do
+		local chunk = UI.ChunkList[i]
+		if chunk.MinX <= chunk.MaxX then
+			local cw = chunk.Width
+			local rectW = chunk.MaxX - chunk.MinX + 1
+			local rectH = chunk.MaxY - chunk.MinY + 1
+			local buf = chunk.Buffer
+
+			if rectW == cw and rectH == chunk.Height then
+				chunk.Image:WritePixelsBuffer(Vector2.zero, chunk.SizeVec, buf)
+			else
+				local requiredBytes = rectW * rectH * 4
+				local tempBuf = UploadBufferPool[requiredBytes]
+				if not tempBuf then
+					tempBuf = bcreate(requiredBytes)
+					UploadBufferPool[requiredBytes] = tempBuf
+				end
+
+				local rowBytes = rectW * 4
+				for row = 0, rectH - 1 do
+					bcopy(tempBuf, row * rowBytes, buf, ((chunk.MinY + row) * cw + chunk.MinX) * 4, rowBytes)
+				end
+				chunk.Image:WritePixelsBuffer(Vector2_new(chunk.MinX, chunk.MinY), Vector2_new(rectW, rectH), tempBuf)
 			end
+
+			resetDirty(chunk)
 		end
 	end
 end
