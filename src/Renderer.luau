@@ -190,6 +190,14 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 		if camera then camera.CameraType = Enum.CameraType.Scriptable end
 
 		local player = Players.LocalPlayer
+		-- Lock out Roblox controls irrelevant to a 2D canvas game: no shift-lock,
+		-- and no user switching of camera/movement mode (we own the camera + input).
+		pcall(function()
+			player.DevEnableMouseLock = false
+			player.DevComputerCameraMovementMode = Enum.DevComputerCameraMovementMode.Classic
+			player.DevComputerMovementMode = Enum.DevComputerMovementMode.Scriptable
+			player.DevTouchMovementMode = Enum.DevTouchMovementMode.Scriptable
+		end)
 		if player.Character then player.Character:Destroy() end
 		player.CharacterAdded:Connect(function(char) char:Destroy() end)
 	end
