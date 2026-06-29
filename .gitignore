@@ -12,3 +12,11 @@ sourcemap.json
 # pycache
 __pycache__/
 *.pyc
+
+# Editor / local tooling
+.vscode/
+
+# Local test harness (NOT part of the engine — prototyping only)
+/game/
+/test.project.json
+/test.rbxl
