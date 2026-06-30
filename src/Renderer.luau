@@ -191,7 +191,6 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 		-- Lock out Roblox controls irrelevant to a 2D canvas game: no shift-lock,
 		-- and no user switching of camera/movement mode (we own the camera + input).
 		pcall(function()
-			player.DevEnableMouseLock = false
 			player.DevComputerCameraMovementMode = Enum.DevComputerCameraMovementMode.Classic
 			player.DevComputerMovementMode = Enum.DevComputerMovementMode.Scriptable
 			player.DevTouchMovementMode = Enum.DevTouchMovementMode.Scriptable
@@ -464,19 +463,27 @@ function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 						if chunk then
 							local localX = px % CHUNK_SIZE
 							if localX < chunk.Width and localY < chunk.Height then
-								local out = src
-								if tinted or alpha ~= 255 then
-									local sr, sg, sb = src % 256, (src // 256) % 256, (src // 65536) % 256
-									local sA = (src // 16777216) % 256
-									if tinted then
-										sr = (sr * tintR) // 255
-										sg = (sg * tintG) // 255
-										sb = (sb * tintB) // 255
-									end
-									if alpha ~= 255 then sA = (sA * alpha) // 255 end
-									out = sr + sg * 256 + sb * 65536 + sA * 16777216
+								local sr, sg, sb = src % 256, (src // 256) % 256, (src // 65536) % 256
+								local oa = (src // 16777216) % 256
+								if tinted then
+									sr = (sr * tintR) // 255
+									sg = (sg * tintG) // 255
+									sb = (sb * tintB) // 255
 								end
-								writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, out)
+								if alpha ~= 255 then oa = (oa * alpha) // 255 end
+								local off = (localY * chunk.Width + localX) * 4
+								if oa >= 255 then
+									writeu32(chunk.Buffer, off, sr + sg * 256 + sb * 65536 + 0xFF000000)
+								else
+									-- alpha-blend over the scene (AA edges + translucent sprites)
+									local dst = readu32(chunk.Buffer, off)
+									local ia = 255 - oa
+									writeu32(chunk.Buffer, off,
+										(sr * oa + (dst % 256) * ia) // 255
+										+ ((sg * oa + (dst // 256 % 256) * ia) // 255) * 256
+										+ ((sb * oa + (dst // 65536 % 256) * ia) // 255) * 65536
+										+ 0xFF000000)
+								end
 								if localX < chunk.MinX then chunk.MinX = localX end
 								if localX > chunk.MaxX then chunk.MaxX = localX end
 								if localY < chunk.MinY then chunk.MinY = localY end
@@ -558,7 +565,10 @@ function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, 
 	if maxX >= screenW then maxX = screenW - 1 end
 	if maxY >= screenH then maxY = screenH - 1 end
 
-	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216
+	a = a or 255
+	local blend = a < 255 -- translucent: alpha-blend over the scene instead of overwrite
+	local packed = r + g * 256 + b * 65536 + a * 16777216
+	local ar, ag, ab, ia = r * a, g * a, b * a, 255 - a
 	for py = minY, maxY do
 		local chunkRow = Chunks[py // CHUNK_SIZE]
 		if chunkRow then
@@ -573,7 +583,17 @@ function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, 
 					if chunk then
 						local localX = px % CHUNK_SIZE
 						if localX < chunk.Width and localY < chunk.Height then
-							writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, packed)
+							local off = (localY * chunk.Width + localX) * 4
+							if blend then
+								local dst = readu32(chunk.Buffer, off)
+								writeu32(chunk.Buffer, off,
+									(ar + (dst % 256) * ia) // 255
+									+ ((ag + (dst // 256 % 256) * ia) // 255) * 256
+									+ ((ab + (dst // 65536 % 256) * ia) // 255) * 65536
+									+ 0xFF000000)
+							else
+								writeu32(chunk.Buffer, off, packed)
+							end
 							if localX < chunk.MinX then chunk.MinX = localX end
 							if localX > chunk.MaxX then chunk.MaxX = localX end
 							if localY < chunk.MinY then chunk.MinY = localY end
