@@ -37,6 +37,20 @@ export type Sprite = {
 	HitboxMaxX: number,
 }
 
+-- Options for Draw.SpriteEx. All optional; omit a field for its default.
+-- Tint multiplies the sprite's RGB (e.g. tint a white sprite any colour); alpha
+-- multiplies its opacity. Rotation is radians, Scale is uniform (1 = native).
+export type SpriteDrawOptions = {
+	Rotation: number?,
+	Scale: number?,
+	FlipX: boolean?,
+	FlipY: boolean?,
+	TintR: number?,
+	TintG: number?,
+	TintB: number?,
+	Alpha: number?,
+}
+
 export type Hitbox = {
 	X: number,
 	Y: number,
@@ -83,10 +97,12 @@ export type Ro2DAPI = {
 		Init: (canvasFrame: GuiObject, config: EngineConfig?) -> (),
 		ScreenToCanvas: (screenX: number, screenY: number) -> (number, number),
 		SetBackground: (callback: () -> ()) -> (),
+		SetTint: (r: number, g: number, b: number, alpha: number) -> (),
 	},
 	Draw: {
 		Pixel: (worldX: number, worldY: number, r: number, g: number, b: number, a: number?) -> (),
 		Sprite: (worldX: number, worldY: number, sprite: Sprite, flipX: boolean?, flipY: boolean?) -> (),
+		SpriteEx: (worldX: number, worldY: number, sprite: Sprite, opts: SpriteDrawOptions?) -> (),
 		Rect: (worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?) -> (),
 		RectRotated: (worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?) -> (),
 		LineSDF: (worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number) -> (),

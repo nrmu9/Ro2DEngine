@@ -53,6 +53,7 @@ local Chunks = {}        -- [y][x] -> Chunk  (spatial lookup)
 local ChunkList = {}     -- flat array of Chunk (order-independent iteration)
 local ChunkUIElements = {}
 local CanvasFrame: Frame? = nil
+local TintFrame: Frame? = nil -- single GPU-composited full-screen colour overlay
 local FixedResolution: Vector2? = nil -- when set, render at exactly this size (letterboxed)
 local UploadBufferPool = {}
 local DeveloperBackgroundCode = nil
@@ -230,6 +231,28 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 	syncResolution()
 end
 
+-- Full-screen colour overlay (screen flashes/tints) via a single Frame the GPU
+-- composites -- essentially free, unlike a per-pixel software blend. alpha 0..255.
+function Renderer.System.SetTint(r: number, g: number, b: number, alpha: number)
+	if not CanvasFrame then return end
+	if not TintFrame then
+		local f = Instance.new("Frame")
+		f.Name = "Ro2DTint"
+		f.Size = UDim2.fromScale(1, 1)
+		f.Position = UDim2.fromScale(0, 0)
+		f.BorderSizePixel = 0
+		f.ZIndex = 5000
+		f.Active = false
+		f.Interactable = false
+		f.BackgroundColor3 = Color3.new(0, 0, 0)
+		f.BackgroundTransparency = 1
+		f.Parent = CanvasFrame
+		TintFrame = f
+	end
+	TintFrame.BackgroundColor3 = Color3.fromRGB(r, g, b)
+	TintFrame.BackgroundTransparency = 1 - clamp(alpha, 0, 255) / 255
+end
+
 function Renderer.System.ScreenToCanvas(screenX: number, screenY: number): (number, number)
 	local g = Renderer.Grid
 	local inv = 1 / g.DisplayScale
@@ -261,6 +284,8 @@ end
 local Draw = Renderer.Draw
 local Grid = Renderer.Grid
 local Camera = Renderer.Camera
+
+local EMPTY_OPTS = table.freeze({})
 
 function Draw.Pixel(worldX: number, worldY: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady then return end
@@ -377,6 +402,85 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 								localX = 0
 								chunkX += 1
 								chunk = chunkRow[chunkX]
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+-- Transformed sprite blit: rotation, uniform scale, tint (multiply), and alpha.
+-- Centered at (worldX, worldY). Per-pixel affine inverse-sampling (nearest), so it
+-- is slower than Draw.Sprite -- use it for the few sprites that need transforms
+-- (ship, oriented one-off bullets), not for thousands of bullets.
+function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
+	if not Grid.IsReady or sprite.IsEmpty then return end
+	opts = opts or EMPTY_OPTS
+	local rot = opts.Rotation or 0
+	local scale = opts.Scale or 1
+	if scale <= 0 then return end
+	local tintR, tintG, tintB = opts.TintR, opts.TintG, opts.TintB
+	local tinted = tintR ~= nil
+	local alpha = opts.Alpha or 255
+	local flipX, flipY = opts.FlipX == true, opts.FlipY == true
+
+	local w, h, buf = sprite.Width, sprite.Height, sprite.Buffer
+	local screenW, screenH = Grid.Width, Grid.Height
+	local cx = worldX - Camera.X
+	local cy = worldY - Camera.Y
+	local ca, sa = cos(rot), sin(rot)
+	local hw, hh = w * 0.5 * scale, h * 0.5 * scale
+	local ex = abs(hw * ca) + abs(hh * sa)
+	local ey = abs(hw * sa) + abs(hh * ca)
+
+	local minX, maxX = floor(cx - ex), floor(cx + ex)
+	local minY, maxY = floor(cy - ey), floor(cy + ey)
+	if maxX < 0 or maxY < 0 or minX >= screenW or minY >= screenH then return end
+	if minX < 0 then minX = 0 end
+	if minY < 0 then minY = 0 end
+	if maxX >= screenW then maxX = screenW - 1 end
+	if maxY >= screenH then maxY = screenH - 1 end
+
+	local invScale = 1 / scale
+	local halfW, halfH = w * 0.5, h * 0.5
+	for py = minY, maxY do
+		local chunkRow = Chunks[py // CHUNK_SIZE]
+		if chunkRow then
+			local localY = py % CHUNK_SIZE
+			local dyc = py - cy
+			for px = minX, maxX do
+				local dxc = px - cx
+				-- inverse-rotate + unscale into source pixel space
+				local sxp = floor((dxc * ca + dyc * sa) * invScale + halfW)
+				local syp = floor((dyc * ca - dxc * sa) * invScale + halfH)
+				if flipX then sxp = w - 1 - sxp end
+				if flipY then syp = h - 1 - syp end
+				if sxp >= 0 and sxp < w and syp >= 0 and syp < h then
+					local src = readu32(buf, (syp * w + sxp) * 4)
+					if src > ALPHA_MASK then
+						local chunk = chunkRow[px // CHUNK_SIZE]
+						if chunk then
+							local localX = px % CHUNK_SIZE
+							if localX < chunk.Width and localY < chunk.Height then
+								local out = src
+								if tinted or alpha ~= 255 then
+									local sr, sg, sb = src % 256, (src // 256) % 256, (src // 65536) % 256
+									local sA = (src // 16777216) % 256
+									if tinted then
+										sr = (sr * tintR) // 255
+										sg = (sg * tintG) // 255
+										sb = (sb * tintB) // 255
+									end
+									if alpha ~= 255 then sA = (sA * alpha) // 255 end
+									out = sr + sg * 256 + sb * 65536 + sA * 16777216
+								end
+								writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, out)
+								if localX < chunk.MinX then chunk.MinX = localX end
+								if localX > chunk.MaxX then chunk.MaxX = localX end
+								if localY < chunk.MinY then chunk.MinY = localY end
+								if localY > chunk.MaxY then chunk.MaxY = localY end
 							end
 						end
 					end
