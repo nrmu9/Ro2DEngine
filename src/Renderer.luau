@@ -17,6 +17,7 @@ local UI = require(script.Parent:WaitForChild("UI"))
 local writeu32, readu32 = buffer.writeu32, buffer.readu32
 local bcopy, bcreate = buffer.copy, buffer.create
 local floor, sqrt, min, max, clamp = math.floor, math.sqrt, math.min, math.max, math.clamp
+local cos, sin, abs = math.cos, math.sin, math.abs
 local Vector2_new = Vector2.new
 local V2_ZERO = Vector2.zero
 
@@ -426,6 +427,55 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 				else
 					-- skip to next chunk boundary
 					px += (CHUNK_SIZE - localX)
+				end
+			end
+		end
+	end
+end
+
+-- Filled rectangle centered at (worldX, worldY), size w*h, rotated by `angle`
+-- radians. Per-pixel affine fill over the rotated bounding box (overwrites; the
+-- alpha byte is stored). For rotated sprites/blocks/lasers.
+function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?)
+	if not Grid.IsReady or w <= 0 or h <= 0 then return end
+	local screenW, screenH = Grid.Width, Grid.Height
+	local cx = worldX - Camera.X
+	local cy = worldY - Camera.Y
+	local ca, sa = cos(angle), sin(angle)
+	local hw, hh = w * 0.5, h * 0.5
+	local ex = abs(hw * ca) + abs(hh * sa)
+	local ey = abs(hw * sa) + abs(hh * ca)
+
+	local minX, maxX = floor(cx - ex), floor(cx + ex)
+	local minY, maxY = floor(cy - ey), floor(cy + ey)
+	if maxX < 0 or maxY < 0 or minX >= screenW or minY >= screenH then return end
+	if minX < 0 then minX = 0 end
+	if minY < 0 then minY = 0 end
+	if maxX >= screenW then maxX = screenW - 1 end
+	if maxY >= screenH then maxY = screenH - 1 end
+
+	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216
+	for py = minY, maxY do
+		local chunkRow = Chunks[py // CHUNK_SIZE]
+		if chunkRow then
+			local localY = py % CHUNK_SIZE
+			local dyc = py - cy
+			for px = minX, maxX do
+				local dxc = px - cx
+				local lx = dxc * ca + dyc * sa
+				local ly = dyc * ca - dxc * sa
+				if lx >= -hw and lx <= hw and ly >= -hh and ly <= hh then
+					local chunk = chunkRow[px // CHUNK_SIZE]
+					if chunk then
+						local localX = px % CHUNK_SIZE
+						if localX < chunk.Width and localY < chunk.Height then
+							writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, packed)
+							if localX < chunk.MinX then chunk.MinX = localX end
+							if localX > chunk.MaxX then chunk.MaxX = localX end
+							if localY < chunk.MinY then chunk.MinY = localY end
+							if localY > chunk.MaxY then chunk.MaxY = localY end
+						end
+					end
 				end
 			end
 		end

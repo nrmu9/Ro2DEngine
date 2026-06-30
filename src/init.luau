@@ -88,6 +88,7 @@ export type Ro2DAPI = {
 		Pixel: (worldX: number, worldY: number, r: number, g: number, b: number, a: number?) -> (),
 		Sprite: (worldX: number, worldY: number, sprite: Sprite, flipX: boolean?, flipY: boolean?) -> (),
 		Rect: (worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?) -> (),
+		RectRotated: (worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?) -> (),
 		LineSDF: (worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number) -> (),
 		CircleSDF: (worldX: number, worldY: number, radius: number, r: number, g: number, b: number, a: number?) -> (),
 		Clear: (r: number, g: number, b: number, a: number?) -> (),
