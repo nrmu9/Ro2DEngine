@@ -1,28 +1,29 @@
 --!optimize 2
 --!native
--- Ro2D :: Renderer
--- Chunked software rasterizer that maps contiguous RGBA buffers onto EditableImages.
--- Uses dirty-region tracking + a persistent background buffer so only changed pixels
--- are ever pushed to the GPU, and old sprite positions are auto-erased to the background.
 
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local Players = game:GetService("Players")
 local AssetService = game:GetService("AssetService")
+local ContextActionService = game:GetService("ContextActionService")
 
 local Input = require(script.Parent:WaitForChild("Input"))
 local UI = require(script.Parent:WaitForChild("UI"))
 
--- Localize hot builtins (fastcall-friendly).
 local writeu32, readu32 = buffer.writeu32, buffer.readu32
 local bcopy, bcreate = buffer.copy, buffer.create
 local floor, sqrt, min, max, clamp = math.floor, math.sqrt, math.min, math.max, math.clamp
 local cos, sin, abs = math.cos, math.sin, math.abs
+local ceil = math.ceil
+local strbyte = string.byte
 local Vector2_new = Vector2.new
 local V2_ZERO = Vector2.zero
 
 local CHUNK_SIZE = 1024
-local ALPHA_MASK = 0xFFFFFF -- value > this  <=>  alpha byte > 0 (little-endian RGBA)
+local ALPHA_MASK = 0xFFFFFF
+local txtColS = table.create(512, 0)
+local txtColN = table.create(512, 0)
+local txtColW = table.create(2048, 0)
 
 type Chunk = {
 	Image: EditableImage,
@@ -40,31 +41,27 @@ local Renderer = {
 	Camera = { X = 0, Y = 0 },
 	Grid = {
 		ChunksX = 0, ChunksY = 0,
-		DisplayScale = 1, -- canvas (screen) pixels per one render/buffer pixel
-		OffsetX = 0, OffsetY = 0, -- letterbox offset of the rendered image within the canvas
-		Width = 0, Height = 0, -- render resolution in pixels (cached)
+		DisplayScale = 1,
+		OffsetX = 0, OffsetY = 0,
+		Width = 0, Height = 0,
 		AntiAliasing = false,
 		IsReady = false,
 	},
 	Resolution = Vector2_new(0, 0),
 }
 
-local Chunks = {}        -- [y][x] -> Chunk  (spatial lookup)
-local ChunkList = {}     -- flat array of Chunk (order-independent iteration)
+local Chunks = {}
+local ChunkList = {}
 local ChunkUIElements = {}
 local CanvasFrame: Frame? = nil
-local TintFrame: Frame? = nil -- single GPU-composited full-screen colour overlay
-local FixedResolution: Vector2? = nil -- when set, render at exactly this size (letterboxed)
+local TintFrame: Frame? = nil
+local FixedResolution: Vector2? = nil
+local FillMode = false
+local SkipRestore = false
 local UploadBufferPool = {}
 local DeveloperBackgroundCode = nil
 
--- =========================================================================
--- INTERNAL HELPERS
--- =========================================================================
 
--- Fills `count` consecutive u32 (pixel) values with `packed`, starting at
--- byte offset `start`, using exponential doubling memcpys instead of a
--- per-element loop. Fills ~N bytes in log2(N) native copies.
 local function fillU32(buf: buffer, start: number, count: number, packed: number)
 	if count <= 0 then return end
 	writeu32(buf, start, packed)
@@ -96,9 +93,13 @@ local function rebuildGrid()
 	if canvasW <= 0 or canvasH <= 0 then return end
 
 	local targetWidth, targetHeight, displayScale, baseOffsetX, baseOffsetY
-	if FixedResolution then
-		-- Fixed internal resolution: render exactly this many pixels, then fit into
-		-- the canvas preserving aspect (letterbox). Same playfield for every screen.
+	if FixedResolution and FillMode then
+		targetHeight = floor(FixedResolution.Y)
+		if targetHeight <= 0 then return end
+		displayScale = canvasH / targetHeight
+		targetWidth = max(1, floor(canvasW / displayScale))
+		baseOffsetX, baseOffsetY = 0, 0
+	elseif FixedResolution then
 		targetWidth = floor(FixedResolution.X)
 		targetHeight = floor(FixedResolution.Y)
 		if targetWidth <= 0 or targetHeight <= 0 then return end
@@ -106,7 +107,6 @@ local function rebuildGrid()
 		baseOffsetX = floor((canvasW - targetWidth * displayScale) * 0.5)
 		baseOffsetY = floor((canvasH - targetHeight * displayScale) * 0.5)
 	else
-		-- No fixed resolution: render at the canvas's native pixel size (1:1).
 		targetWidth = floor(canvasW)
 		targetHeight = floor(canvasH)
 		displayScale = 1
@@ -167,9 +167,6 @@ local function rebuildGrid()
 	Renderer.Grid.IsReady = true
 end
 
--- =========================================================================
--- SYSTEM NAMESPACE
--- =========================================================================
 function Renderer.System.Init(canvasFrame: Frame, config: any)
 	assert(typeof(canvasFrame) == "Instance" and canvasFrame:IsA("GuiObject"),
 		"[Ro2D] System.Init expects a GuiObject (e.g. a Frame) as the canvas.")
@@ -177,27 +174,9 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 	config = config or {}
 	Renderer.Grid.AntiAliasing = config.AntiAliasing == true
 
-	-- Optional fixed internal resolution: render at exactly this size regardless of
-	-- screen, letterboxed to fit. Keeps the playfield + perf consistent across monitors.
 	local res = config.Resolution
 	FixedResolution = if typeof(res) == "Vector2" and res.X >= 1 and res.Y >= 1 then res else nil
-
-	if config.Isolate2D then
-		pcall(function() StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false) end)
-		local camera = workspace.CurrentCamera
-		if camera then camera.CameraType = Enum.CameraType.Scriptable end
-
-		local player = Players.LocalPlayer
-		-- Lock out Roblox controls irrelevant to a 2D canvas game: no shift-lock,
-		-- and no user switching of camera/movement mode (we own the camera + input).
-		pcall(function()
-			player.DevComputerCameraMovementMode = Enum.DevComputerCameraMovementMode.Classic
-			player.DevComputerMovementMode = Enum.DevComputerMovementMode.Scriptable
-			player.DevTouchMovementMode = Enum.DevTouchMovementMode.Scriptable
-		end)
-		if player.Character then player.Character:Destroy() end
-		player.CharacterAdded:Connect(function(char) char:Destroy() end)
-	end
+	FillMode = config.Fill == true
 
 	canvasFrame.ClipsDescendants = true
 	canvasFrame.BackgroundTransparency = 0
@@ -230,8 +209,19 @@ function Renderer.System.Init(canvasFrame: Frame, config: any)
 	syncResolution()
 end
 
--- Full-screen colour overlay (screen flashes/tints) via a single Frame the GPU
--- composites -- essentially free, unlike a per-pixel software blend. alpha 0..255.
+function Renderer.System.SetResolution(res: Vector2?, fill: boolean?)
+	local fixed = if typeof(res) == "Vector2" and res.X >= 1 and res.Y >= 1 then res else nil
+	local newFill = if fill == nil then FillMode else fill == true
+	if fixed == FixedResolution and newFill == FillMode then return end
+	if fixed and FixedResolution and fixed.X == FixedResolution.X and fixed.Y == FixedResolution.Y and newFill == FillMode then return end
+	FixedResolution = fixed
+	FillMode = newFill
+	if CanvasFrame then
+		Renderer.Grid.IsReady = false
+		rebuildGrid()
+	end
+end
+
 function Renderer.System.SetTint(r: number, g: number, b: number, alpha: number)
 	if not CanvasFrame then return end
 	if not TintFrame then
@@ -258,6 +248,10 @@ function Renderer.System.ScreenToCanvas(screenX: number, screenY: number): (numb
 	return floor((screenX - g.OffsetX) * inv), floor((screenY - g.OffsetY) * inv)
 end
 
+function Renderer.System.SetImmediateMode(on: boolean)
+	SkipRestore = on and true or false
+end
+
 function Renderer.System.SetBackground(callback)
 	DeveloperBackgroundCode = callback
 	if not callback or not Renderer.Grid.IsReady then return end
@@ -277,9 +271,6 @@ function Renderer.System.SetBackground(callback)
 	end
 end
 
--- =========================================================================
--- DRAW NAMESPACE
--- =========================================================================
 local Draw = Renderer.Draw
 local Grid = Renderer.Grid
 local Camera = Renderer.Camera
@@ -302,7 +293,6 @@ function Draw.Pixel(worldX: number, worldY: number, r: number, g: number, b: num
 	local localY = y % CHUNK_SIZE
 	if localX >= chunk.Width or localY >= chunk.Height then return end
 
-	-- Pack RGBA into one u32 (little-endian) and write in a single op.
 	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216
 	writeu32(chunk.Buffer, (localY * chunk.Width + localX) * 4, packed)
 
@@ -319,11 +309,6 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 	local startY = floor(worldY - Camera.Y)
 	local w, h, buf, bounds = sprite.Width, sprite.Height, sprite.Buffer, sprite.RowBounds
 	local screenW, screenH = Grid.Width, Grid.Height
-
-	-- Fast path: sprites whose rows have no interior transparency (and aren't
-	-- mirrored horizontally) can be blitted one whole row-span at a time with a
-	-- native buffer.copy instead of pixel-by-pixel. Huge win for dense, small,
-	-- opaque sprites (e.g. bullets). flipY is fine — it only reorders rows.
 	local solidFast = sprite.SolidRows and not flipX
 
 	for y = 0, h - 1 do
@@ -339,7 +324,6 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 					local srcRowOffset = readY * w * 4
 
 					if solidFast then
-						-- Contiguous opaque span on screen, clipped to canvas width.
 						local spanStart = startX + row.MinX
 						local spanEnd = startX + row.MaxX
 						if spanStart < 0 then spanStart = 0 end
@@ -354,8 +338,6 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 								if maxLocal > chunk.Width - 1 then maxLocal = chunk.Width - 1 end
 								local copyCount = maxLocal - localX + 1
 
-								-- src x for screen x `sx` is (sx - startX); the span lives
-								-- inside [row.MinX, row.MaxX], so reads stay in bounds.
 								bcopy(
 									chunk.Buffer, (localY * chunk.Width + localX) * 4,
 									buf, srcRowOffset + (sx - startX) * 4,
@@ -369,11 +351,10 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 
 								sx += copyCount
 							else
-								sx += CHUNK_SIZE - localX -- skip to next chunk boundary
+								sx += CHUNK_SIZE - localX
 							end
 						end
 					else
-						-- Per-pixel path: handles flipX and interior transparency.
 						local destMinX = if flipX then (w - 1 - row.MaxX) else row.MinX
 						local destMaxX = if flipX then (w - 1 - row.MinX) else row.MaxX
 
@@ -410,10 +391,6 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 	end
 end
 
--- Transformed sprite blit: rotation, uniform scale, tint (multiply), and alpha.
--- Centered at (worldX, worldY). Per-pixel affine inverse-sampling (nearest), so it
--- is slower than Draw.Sprite -- use it for the few sprites that need transforms
--- (ship, oriented one-off bullets), not for thousands of bullets.
 function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 	if not Grid.IsReady or sprite.IsEmpty then return end
 	opts = opts or EMPTY_OPTS
@@ -444,6 +421,61 @@ function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 
 	local invScale = 1 / scale
 	local halfW, halfH = w * 0.5, h * 0.5
+
+	if rot == 0 then
+		for py = minY, maxY do
+			local chunkRow = Chunks[py // CHUNK_SIZE]
+			if chunkRow then
+				local localY = py % CHUNK_SIZE
+				local syp = floor((py - cy) * invScale + halfH)
+				if flipY then syp = h - 1 - syp end
+				if syp >= 0 and syp < h then
+					local rowBase = syp * w
+					for px = minX, maxX do
+						local sxp = floor((px - cx) * invScale + halfW)
+						if flipX then sxp = w - 1 - sxp end
+						if sxp >= 0 and sxp < w then
+							local src = readu32(buf, (rowBase + sxp) * 4)
+							if src > ALPHA_MASK then
+								local chunk = chunkRow[px // CHUNK_SIZE]
+								if chunk then
+									local localX = px % CHUNK_SIZE
+									if localX < chunk.Width and localY < chunk.Height then
+										local sr, sg, sb = src % 256, (src // 256) % 256, (src // 65536) % 256
+										local oa = (src // 16777216) % 256
+										if tinted then
+											sr = (sr * tintR) // 255
+											sg = (sg * tintG) // 255
+											sb = (sb * tintB) // 255
+										end
+										if alpha ~= 255 then oa = (oa * alpha) // 255 end
+										local off = (localY * chunk.Width + localX) * 4
+										if oa >= 255 then
+											writeu32(chunk.Buffer, off, sr + sg * 256 + sb * 65536 + 0xFF000000)
+										else
+											local dst = readu32(chunk.Buffer, off)
+											local ia = 255 - oa
+											writeu32(chunk.Buffer, off,
+												(sr * oa + (dst % 256) * ia) // 255
+												+ ((sg * oa + (dst // 256 % 256) * ia) // 255) * 256
+												+ ((sb * oa + (dst // 65536 % 256) * ia) // 255) * 65536
+												+ 0xFF000000)
+										end
+										if localX < chunk.MinX then chunk.MinX = localX end
+										if localX > chunk.MaxX then chunk.MaxX = localX end
+										if localY < chunk.MinY then chunk.MinY = localY end
+										if localY > chunk.MaxY then chunk.MaxY = localY end
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+		return
+	end
+
 	for py = minY, maxY do
 		local chunkRow = Chunks[py // CHUNK_SIZE]
 		if chunkRow then
@@ -451,7 +483,6 @@ function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 			local dyc = py - cy
 			for px = minX, maxX do
 				local dxc = px - cx
-				-- inverse-rotate + unscale into source pixel space
 				local sxp = floor((dxc * ca + dyc * sa) * invScale + halfW)
 				local syp = floor((dyc * ca - dxc * sa) * invScale + halfH)
 				if flipX then sxp = w - 1 - sxp end
@@ -475,7 +506,6 @@ function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 								if oa >= 255 then
 									writeu32(chunk.Buffer, off, sr + sg * 256 + sb * 65536 + 0xFF000000)
 								else
-									-- alpha-blend over the scene (AA edges + translucent sprites)
 									local dst = readu32(chunk.Buffer, off)
 									local ia = 255 - oa
 									writeu32(chunk.Buffer, off,
@@ -497,8 +527,143 @@ function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 	end
 end
 
--- Filled, world-space rectangle. Fills contiguous spans with a single packed
--- color using doubling memcpys, walking across chunk boundaries.
+function Draw.MeasureText(text: string, font: any, scale: number?): number
+	local glyphs, space = font.Glyphs, font.SpaceAdvance
+	local w = 0
+	for i = 1, #text do
+		local g = glyphs[strbyte(text, i)]
+		w += if g then g.Adv else space
+	end
+	return w * (scale or 1)
+end
+
+function Draw.Text(worldX: number, worldY: number, text: string, font: any, opts: any?)
+	if not Grid.IsReady or text == "" then return end
+	opts = opts or EMPTY_OPTS
+	local scale = opts.Scale or 1
+	if scale <= 0 then return end
+	local tintR, tintG, tintB = opts.TintR, opts.TintG, opts.TintB
+	local tinted = tintR ~= nil
+	local alpha = opts.Alpha or 255
+	local glyphs, atlas, aw, space = font.Glyphs, font.Buffer, font.Width, font.SpaceAdvance
+	local screenW, screenH = Grid.Width, Grid.Height
+	local invScale = 1 / scale
+
+	local penX = worldX
+	local align = opts.Align
+	if align == "center" then
+		penX -= Draw.MeasureText(text, font, scale) * 0.5
+	elseif align == "right" then
+		penX -= Draw.MeasureText(text, font, scale)
+	end
+	if opts.VAlign == "center" then
+		worldY -= (font.CapCenter or 0) * scale
+	end
+
+	local sr = tinted and tintR or 255
+	local sg = tinted and tintG or 255
+	local sb = tinted and tintB or 255
+	local areaInv = scale * scale
+	for i = 1, #text do
+		local g = glyphs[strbyte(text, i)]
+		if g then
+			local gx, gy = g.X, g.Y
+			local gW, gH = g.W, g.H
+			local ox = floor(penX + g.OX * scale - Camera.X)
+			local oy = floor(worldY + g.OY * scale - Camera.Y)
+			local dw, dh = floor(gW * scale), floor(gH * scale)
+			local wIdx = 0
+			for px = 0, dw - 1 do
+				local fx0 = px * invScale
+				local fx1 = fx0 + invScale
+				if fx1 > gW then fx1 = gW end
+				local sxA = floor(fx0)
+				local sxB = ceil(fx1) - 1
+				txtColS[px] = sxA
+				txtColN[px] = sxB - sxA + 1
+				local sx = sxA
+				while sx <= sxB do
+					local lo = sx > fx0 and sx or fx0
+					local hi = sx + 1 < fx1 and sx + 1 or fx1
+					txtColW[wIdx] = hi - lo
+					wIdx += 1
+					sx += 1
+				end
+			end
+			for py = 0, dh - 1 do
+				local screenY = oy + py
+				if screenY >= 0 and screenY < screenH then
+					local chunkRow = Chunks[screenY // CHUNK_SIZE]
+					if chunkRow then
+						local localY = screenY % CHUNK_SIZE
+						local fy0 = py * invScale
+						local fy1 = fy0 + invScale
+						if fy1 > gH then fy1 = gH end
+						local syA = floor(fy0)
+						local syB = ceil(fy1) - 1
+						local wCol = 0
+						for px = 0, dw - 1 do
+							local screenX = ox + px
+							local sxA, nS = txtColS[px], txtColN[px]
+							if screenX >= 0 and screenX < screenW then
+								local oa
+								if nS == 1 and syA == syB then
+									oa = (readu32(atlas, ((gy + syA) * aw + gx + sxA) * 4) // 16777216) % 256
+								else
+									local acc = 0
+									local sy = syA
+									while sy <= syB do
+										local wy = min(sy + 1, fy1) - (sy > fy0 and sy or fy0)
+										if wy > 0 then
+											local rowoff = (gy + sy) * aw + gx
+											for k = 0, nS - 1 do
+												local a = (readu32(atlas, (rowoff + sxA + k) * 4) // 16777216) % 256
+												if a > 0 then acc += a * txtColW[wCol + k] * wy end
+											end
+										end
+										sy += 1
+									end
+									oa = floor(acc * areaInv + 0.5)
+									if oa > 255 then oa = 255 end
+								end
+								if alpha ~= 255 then oa = (oa * alpha) // 255 end
+								if oa > 0 then
+									local chunk = chunkRow[screenX // CHUNK_SIZE]
+									if chunk then
+										local localX = screenX % CHUNK_SIZE
+										if localX < chunk.Width and localY < chunk.Height then
+											local off = (localY * chunk.Width + localX) * 4
+											if oa >= 255 then
+												writeu32(chunk.Buffer, off, sr + sg * 256 + sb * 65536 + 0xFF000000)
+											else
+												local dst = readu32(chunk.Buffer, off)
+												local ia = 255 - oa
+												writeu32(chunk.Buffer, off,
+													(sr * oa + (dst % 256) * ia) // 255
+													+ ((sg * oa + (dst // 256 % 256) * ia) // 255) * 256
+													+ ((sb * oa + (dst // 65536 % 256) * ia) // 255) * 65536
+													+ 0xFF000000)
+											end
+											if localX < chunk.MinX then chunk.MinX = localX end
+											if localX > chunk.MaxX then chunk.MaxX = localX end
+											if localY < chunk.MinY then chunk.MinY = localY end
+											if localY > chunk.MaxY then chunk.MaxY = localY end
+										end
+									end
+								end
+							end
+							wCol += nS
+						end
+					end
+				end
+			end
+			penX += g.Adv * scale
+		else
+			penX += space * scale
+		end
+	end
+end
+
 function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady or w <= 0 or h <= 0 then return end
 
@@ -514,7 +679,7 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 	if x1 >= screenW then x1 = screenW - 1 end
 	if y1 >= screenH then y1 = screenH - 1 end
 
-	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216
+	local aa = a or 255
 
 	for y = y0, y1 do
 		local chunkRow = Chunks[y // CHUNK_SIZE]
@@ -527,7 +692,20 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 				if chunk then
 					local spanEndLocal = min(chunk.Width - 1, localX + (x1 - px))
 					local count = spanEndLocal - localX + 1
-					fillU32(chunk.Buffer, (localY * chunk.Width + localX) * 4, count, packed)
+					if aa >= 255 then
+						fillU32(chunk.Buffer, (localY * chunk.Width + localX) * 4, count, r + g * 256 + b * 65536 + 0xFF000000)
+					else
+						local cw, buf, ia = chunk.Width, chunk.Buffer, 255 - aa
+						for lx = localX, spanEndLocal do
+							local off = (localY * cw + lx) * 4
+							local dst = readu32(buf, off)
+							writeu32(buf, off,
+								(r * aa + (dst % 256) * ia) // 255
+								+ ((g * aa + (dst // 256 % 256) * ia) // 255) * 256
+								+ ((b * aa + (dst // 65536 % 256) * ia) // 255) * 65536
+								+ 0xFF000000)
+						end
+					end
 
 					if localX < chunk.MinX then chunk.MinX = localX end
 					if spanEndLocal > chunk.MaxX then chunk.MaxX = spanEndLocal end
@@ -536,7 +714,6 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 
 					px += count
 				else
-					-- skip to next chunk boundary
 					px += (CHUNK_SIZE - localX)
 				end
 			end
@@ -544,9 +721,6 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 	end
 end
 
--- Filled rectangle centered at (worldX, worldY), size w*h, rotated by `angle`
--- radians. Per-pixel affine fill over the rotated bounding box (overwrites; the
--- alpha byte is stored). For rotated sprites/blocks/lasers.
 function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady or w <= 0 or h <= 0 then return end
 	local screenW, screenH = Grid.Width, Grid.Height
@@ -566,9 +740,43 @@ function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, 
 	if maxY >= screenH then maxY = screenH - 1 end
 
 	a = a or 255
-	local blend = a < 255 -- translucent: alpha-blend over the scene instead of overwrite
+	local blend = a < 255
 	local packed = r + g * 256 + b * 65536 + a * 16777216
 	local ar, ag, ab, ia = r * a, g * a, b * a, 255 - a
+
+	if angle == 0 then
+		for py = minY, maxY do
+			local chunkRow = Chunks[py // CHUNK_SIZE]
+			if chunkRow then
+				local localY = py % CHUNK_SIZE
+				for px = minX, maxX do
+					local chunk = chunkRow[px // CHUNK_SIZE]
+					if chunk then
+						local localX = px % CHUNK_SIZE
+						if localX < chunk.Width and localY < chunk.Height then
+							local off = (localY * chunk.Width + localX) * 4
+							if blend then
+								local dst = readu32(chunk.Buffer, off)
+								writeu32(chunk.Buffer, off,
+									(ar + (dst % 256) * ia) // 255
+									+ ((ag + (dst // 256 % 256) * ia) // 255) * 256
+									+ ((ab + (dst // 65536 % 256) * ia) // 255) * 65536
+									+ 0xFF000000)
+							else
+								writeu32(chunk.Buffer, off, packed)
+							end
+							if localX < chunk.MinX then chunk.MinX = localX end
+							if localX > chunk.MaxX then chunk.MaxX = localX end
+							if localY < chunk.MinY then chunk.MinY = localY end
+							if localY > chunk.MaxY then chunk.MaxY = localY end
+						end
+					end
+				end
+			end
+		end
+		return
+	end
+
 	for py = minY, maxY do
 		local chunkRow = Chunks[py // CHUNK_SIZE]
 		if chunkRow then
@@ -643,7 +851,6 @@ function Draw.LineSDF(worldX0: number, worldY0: number, worldX1: number, worldY1
 	end
 end
 
--- True anti-aliased circle via signed distance coverage.
 function Draw.CircleSDF(worldX: number, worldY: number, radius: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady or radius <= 0 then return end
 	a = a or 255
@@ -660,7 +867,7 @@ function Draw.CircleSDF(worldX: number, worldY: number, radius: number, r: numbe
 		for px = startX, endX do
 			local dx = px - worldX
 			local dist = sqrt(dx * dx + dySq)
-			local coverage = radius - dist + 0.5 -- 1 inside, 0 outside, fractional on the edge
+			local coverage = radius - dist + 0.5
 			if coverage > 0 then
 				local pa = if coverage >= 1 then a else floor(a * coverage)
 				if pa > 0 then pixel(px, py, r, g, b, pa) end
@@ -681,11 +888,13 @@ function Draw.Clear(r: number, g: number, b: number, a: number?)
 	end
 end
 
--- =========================================================================
--- GPU AUTO-RENDER LOOP
--- =========================================================================
+local overlayFn = nil
+function Renderer.System.SetOverlay(fn) overlayFn = fn end
+
 local wasReady = false
 RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, function()
+	Input.Flush()
+	UI.Flush()
 	if not Grid.IsReady then
 		wasReady = false
 		return
@@ -695,6 +904,8 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 		wasReady = true
 		if DeveloperBackgroundCode then Renderer.System.SetBackground(DeveloperBackgroundCode) end
 	end
+
+	if overlayFn then pcall(overlayFn) end
 
 	for i = 1, #ChunkList do
 		local chunk = ChunkList[i]
@@ -740,10 +951,7 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 				chunk.Image:WritePixelsBuffer(Vector2_new(uMinX, uMinY), Vector2_new(rectW, rectH), tempBuf)
 			end
 
-			-- Restore the background into the region we just drew so the next frame
-			-- starts clean (auto-erase). BgBuffer is zero by default, or the snapshot
-			-- captured by System.SetBackground.
-			if hasCurrent then
+			if hasCurrent and not SkipRestore then
 				local bg = chunk.BgBuffer
 				local copyBytes = (chunk.MaxX - chunk.MinX + 1) * 4
 				for row = chunk.MinY, chunk.MaxY do
@@ -758,9 +966,6 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 			chunk.MinY = chunk.Height; chunk.MaxY = -1
 		end
 	end
-
-	Input.Flush()
-	UI.Flush()
 end)
 
 return Renderer

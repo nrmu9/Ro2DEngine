@@ -1,7 +1,5 @@
 --!optimize 2
 --!native
--- Ro2D :: Physics
--- Stateless AABB + radial solvers. Functions mutate the entity passed in.
 
 export type Hitbox = {
 	X: number,
@@ -47,7 +45,7 @@ function Physics.UpdateRadialEntity(entity: PhysicsEntity, targetX: number, targ
 	local dx = targetX - entity.X
 	local dy = targetY - entity.Y
 	local dist = sqrt(dx * dx + dy * dy)
-	if dist == 0 then return end -- coincident with target; no defined direction
+	if dist == 0 then return end
 
 	local invDist = 1 / dist
 	local dirX, dirY = dx * invDist, dy * invDist
@@ -99,7 +97,6 @@ function Physics.UpdateEntity(entity: PhysicsEntity, dt: number, hitboxes: { Hit
 	local count = #hitboxes
 	entity.IsGrounded = false
 
-	-- Horizontal sweep
 	if velX ~= 0 then
 		local trueX = entity.X + offX
 		local trueY = entity.Y + offY
@@ -123,7 +120,6 @@ function Physics.UpdateEntity(entity: PhysicsEntity, dt: number, hitboxes: { Hit
 		if not collided then entity.X += velX * dt end
 	end
 
-	-- Vertical sweep (recompute X-derived position after the horizontal step)
 	if velY ~= 0 then
 		local trueX = entity.X + offX
 		local trueY = entity.Y + offY

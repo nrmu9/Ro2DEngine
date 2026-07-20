@@ -1,9 +1,5 @@
 --!optimize 2
 --!native
--- Ro2D :: UI
--- Persistent overlay layer rendered above the world. Unlike the world buffers it is
--- not auto-cleared each frame; it tracks dirty sub-rectangles so Flush only uploads
--- the pixels that actually changed since the last frame.
 
 local AssetService = game:GetService("AssetService")
 
@@ -17,8 +13,8 @@ local CHUNK_SIZE = 1024
 
 local UI = {
 	LayerFrame = nil,
-	Chunks = {},     -- [y][x] -> chunk
-	ChunkList = {},  -- flat array
+	Chunks = {},
+	ChunkList = {},
 	Width = 0,
 	Height = 0,
 	IsReady = false,
@@ -56,7 +52,7 @@ function UI.Init(parentLayer: Frame, screenW: number, screenH: number, displaySc
 
 	local chunksX = math.ceil(screenW / CHUNK_SIZE)
 	local chunksY = math.ceil(screenH / CHUNK_SIZE)
-	local invScale = displayScale -- canvas px per buffer px (matches the world layer)
+	local invScale = displayScale
 
 	for y = 0, chunksY - 1 do
 		local row = {}
@@ -81,7 +77,7 @@ function UI.Init(parentLayer: Frame, screenW: number, screenH: number, displaySc
 			frame.ImageContent = Content.fromObject(image)
 
 			local byteSize = chunkW * chunkH * 4
-			local buf = bcreate(byteSize) -- zero-initialized
+			local buf = bcreate(byteSize)
 
 			local chunk = {
 				Image = image,
@@ -177,7 +173,6 @@ function UI.DrawFrame(screenX: number, screenY: number, w: number, h: number, r:
 						end
 					end
 
-					-- Expand the chunk's dirty rectangle.
 					if lsx < chunk.MinX then chunk.MinX = lsx end
 					if lex > chunk.MaxX then chunk.MaxX = lex end
 					if lsy < chunk.MinY then chunk.MinY = lsy end

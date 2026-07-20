@@ -1,6 +1,4 @@
 --!optimize 2
--- Ro2D :: World
--- Lightweight entity registry + per-frame update/draw dispatch.
 
 local Physics = require(script.Parent:WaitForChild("Physics"))
 
@@ -9,7 +7,6 @@ local World = {
 	StaticHitboxes = {},
 }
 
--- Shared so every entity reuses one closure instead of allocating its own.
 local function destroyEntity(self)
 	self._isDead = true
 end
