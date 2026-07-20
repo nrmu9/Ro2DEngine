@@ -1,32 +1,54 @@
 # Ro2D Engine
 
-Ro2D is a high-performance, strictly code-driven 2D software rendering and physics engine for Roblox. It bypasses standard GUI nodes (like ImageLabels and Frames) and instead manipulates contiguous memory buffers mapped to the `EditableImage` API.
+Ro2D is a high-performance, code-driven 2D software rendering and physics engine
+for Roblox. Instead of standard GUI nodes (ImageLabels, Frames), it manipulates
+contiguous memory buffers mapped to the `EditableImage` API, giving you a fully
+isolated 2D canvas that you draw to pixel by pixel.
 
-I built this for developers who want a completely isolated 2D environment inside Roblox for retro minigames, custom physics simulations, or complex UI rendering without the overhead of the DOM-like Roblox GUI system.
+It is built for developers who want a self-contained 2D environment inside
+Roblox for retro minigames, bullet-hell games, custom physics simulations, or
+spatial UI, without the overhead of the Roblox GUI system.
 
 ## Features
 
-* **Zero-Allocation Rendering:** The engine recycles upload buffers using an internal memory pool to completely eliminate Garbage Collection (GC) spikes during the render loop. Pixels are read and written 32 bits at a time (one RGBA value per buffer op) instead of byte-by-byte.
-* **Dirty Region Optimization:** The canvas is split into spatial chunks. Instead of wiping and redrawing the entire screen every frame, Ro2D tracks the min/max bounds of modified pixels and only pushes the exact dirty rectangles to the GPU. The UI overlay layer uses the same sub-rectangle upload strategy.
-* **Auto-Erase Background Buffer:** Each chunk keeps a persistent background snapshot. After uploading a frame, the dirty region is restored to the background, so moving sprites erase their old positions automatically — you don't need to clear the screen unless you want to.
-* **Fast Clear & Fill:** `Draw.Clear` and `Draw.Rect` fill memory using exponential-doubling `buffer.copy` (log-time native memcpys) rather than per-pixel loops.
-* **Built-in Physics & World Management:** Out-of-the-box support for AABB collision detection, radial orbital physics, and gravity application.
-* **True SDF Primitives:** Draw circles and lines using Signed Distance Fields for smooth, anti-aliased sub-pixel edges.
+* **Zero-allocation render loop.** Upload buffers are recycled from an internal
+  pool, eliminating GC spikes. Pixels are read and written 32 bits at a time
+  (one RGBA value per buffer op) rather than byte by byte.
+* **Dirty-region uploads.** The canvas is split into spatial chunks. Only the
+  min/max bounds of modified pixels are pushed to the GPU each frame instead of
+  the whole screen. The UI overlay uses the same strategy.
+* **Auto-erase background.** Each chunk keeps a persistent snapshot. After a
+  frame is uploaded, the dirty region is restored, so moving sprites clear their
+  old positions automatically without a full-screen clear.
+* **Optional multi-threading.** With `Parallel = true`, a pool of worker Actors
+  rasterizes horizontal screen bands in parallel from a shared draw-command
+  stream. The engine transparently falls back to the single-threaded path.
+* **Parallel compute pool.** Run pure Luau kernels over packed buffers across
+  extra worker Actors, decoupled from rendering, for heavy per-entity math.
+* **Rotated and tinted primitives.** `Draw.RectRotated` and `Draw.SpriteEx`
+  support rotation, scale, flip, tint, and alpha blending.
+* **Bitmap text.** Load a baked font atlas and draw text with area-coverage
+  sampling, keeping stroke weight consistent at any scale.
+* **Built-in physics.** AABB collision, radial/orbital physics, and gravity.
+* **SDF primitives.** Anti-aliased circles and lines via signed distance fields.
+* **Fixed or native resolution.** Render at the native canvas size or a fixed
+  internal resolution (letterboxed, with an optional fill mode).
 
-## The Asset Pipeline: `png2lua`
+## The asset pipeline: `png2lua`
 
-Because Ro2D writes pixel data directly to memory, you can't just use standard Roblox Image/Texture IDs. To solve this, I built the **`png2lua`** tool (included in this repository).
+Because Ro2D writes pixels directly to memory, standard Roblox image IDs do not
+work. The `png2lua` tool (in `tools/`) compiles `.png` sprites into optimized
+Luau `ModuleScripts`: it packs RGBA data into a string that the engine decodes
+into a `buffer`, and records the sprite's opaque bounds so fully transparent
+rows are skipped at draw time.
 
-`png2lua` takes your standard `.png` sprite files and compiles them into highly optimized Luau `ModuleScripts`. It packs the RGBA data into a string that the engine converts into a `buffer`. During loading of the sprite, Ro2D calculates the exact bounds of the sprite and ignores fully transparent rows. This allows the `Ro2D.Draw.Sprite` function to skip transparent pixels entirely, making sprite rendering incredibly fast.
-
-Usage example:
-`python png2lua.py -i sprite.png -o sprite.lua`
+```
+python tools/png2lua.py -i sprite.png -o sprite.luau
+```
 
 ## Installation
 
-### Method 1: Rojo (Recommended)
-
-This project is structured for Rojo. Clone the repository and sync it to your Studio session:
+### Rojo (recommended)
 
 ```
 git clone https://github.com/nrmu9/Ro2DEngine.git
@@ -34,83 +56,97 @@ cd Ro2DEngine
 rojo serve
 ```
 
-### Method 2: Roblox Model
+The default project maps `src` to `ReplicatedStorage/Ro2DEngine`.
 
-Download the latest `.rbxmx` release from the [Releases](https://github.com/nrmu9/Ro2DEngine/releases) tab and drop it into `ReplicatedStorage`.
+### Wally
 
-## Quick Start
+Add Ro2D to your `wally.toml`:
 
-Here is a basic boilerplate to initialize the engine, load a compiled sprite, and run the main loop:
+```toml
+[dependencies]
+Ro2D = "nrmu9/ro2dengine@0.1.0"
+```
+
+### Roblox model
+
+Each tagged release ships a prebuilt `Ro2DEngine.rbxm` on the
+[Releases](https://github.com/nrmu9/Ro2DEngine/releases) page (built by CI).
+Download it and drop it into `ReplicatedStorage`.
+
+## Quick start
 
 ```lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Ro2D = require(ReplicatedStorage.Ro2DEngine)
 
--- 1. Setup the Canvas
+-- 1. Set up the canvas
 local canvas = script.Parent.CanvasFrame
 Ro2D.System.Init(canvas, {
     Isolate2D = true,
-    Resolution = Vector2.new(1024, 576), -- fixed internal resolution (letterboxed); omit for native
-    AntiAliasing = false
+    Resolution = Vector2.new(1024, 576), -- fixed internal resolution; omit for native
+    AntiAliasing = false,
+    -- Parallel = true, WorkerCount = 4,  -- opt into multi-threaded rendering
 })
 
--- 2. Load a Sprite (compiled via png2lua)
-local PlayerModule = ReplicatedStorage.Assets.PlayerSprite
-local PlayerSprite = Ro2D.Assets.LoadSprite(PlayerModule)
+-- 2. Load a sprite (compiled via png2lua)
+local PlayerSprite = Ro2D.Assets.LoadSprite(ReplicatedStorage.Assets.PlayerSprite)
 
--- 3. Spawn an Entity
+-- 3. Spawn an entity
 local player = Ro2D.World.Spawn(500, 500, PlayerSprite)
 Ro2D.Physics.Gravity = 900
 
 player.OnUpdate = function(self, dt)
     if Ro2D.Input.IsKeyDown(Enum.KeyCode.D) then
-        self.VelocityX = 200
-        self.FlipX = false
+        self.VelocityX, self.FlipX = 200, false
     elseif Ro2D.Input.IsKeyDown(Enum.KeyCode.A) then
-        self.VelocityX = -200
-        self.FlipX = true
+        self.VelocityX, self.FlipX = -200, true
     else
         self.VelocityX = 0
     end
 end
 
--- 4. Main Loop
+-- 4. Main loop
 RunService.RenderStepped:Connect(function(dt)
     if not Ro2D.IsReady then return end
-
     Ro2D.World.UpdateAll(dt)
-    Ro2D.Draw.Clear(20, 20, 30, 255) -- Clear background
+    Ro2D.Draw.Clear(20, 20, 30, 255)
     Ro2D.World.DrawAll()
 end)
-
 ```
 
 ## Drawing API
 
-All `Draw` calls operate in **world space** (offset by `Ro2D.Camera`). Colors are `0–255` integers; alpha is optional and defaults to `255`.
+All `Draw` calls operate in world space (offset by `Ro2D.Camera`). Colors are
+`0-255` integers; alpha is optional and defaults to `255`.
 
 | Function | Description |
 | --- | --- |
 | `Draw.Pixel(x, y, r, g, b, a?)` | Write a single pixel. |
-| `Draw.Sprite(x, y, sprite, flipX?, flipY?)` | Blit a compiled sprite, skipping transparent pixels. Sprites with no interior transparency blit each row as a single `buffer.copy` span. |
-| `Draw.Rect(x, y, w, h, r, g, b, a?)` | Fast filled rectangle (chunk-aware span fills). |
+| `Draw.Sprite(x, y, sprite, flipX?, flipY?)` | Blit a compiled sprite, skipping transparent pixels. Fully opaque rows blit as one `buffer.copy` span. |
+| `Draw.SpriteEx(x, y, sprite, opts?)` | Sprite with rotation, scale, flip, tint, and alpha. |
+| `Draw.Rect(x, y, w, h, r, g, b, a?)` | Fast filled rectangle. |
+| `Draw.RectRotated(x, y, w, h, angle, r, g, b, a?)` | Rotated filled rectangle. |
+| `Draw.Text(x, y, text, font, opts?)` | Bitmap text (scale, tint, alpha, alignment). |
+| `Draw.MeasureText(text, font, scale?)` | Pixel width of a text string. |
 | `Draw.CircleSDF(x, y, radius, r, g, b, a?)` | Anti-aliased filled circle. |
 | `Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)` | Anti-aliased line. |
 | `Draw.Clear(r, g, b, a?)` | Fill the whole canvas. |
 
-`Ro2D.Assets.LoadSprite` caches its result per `ModuleScript`, so requiring the same sprite repeatedly is free after the first decode.
+`Assets.LoadSprite` and `Assets.LoadFont` cache their result per `ModuleScript`,
+so requiring the same asset again is free after the first decode.
 
-## Disclaimer regarding UI
+## UI module
 
-The `Ro2D.UI` module included in the source is currently a **Work In Progress**. While it is functional (and used in my example places), the API is not final and will likely undergo breaking changes in future updates. Rely on `Draw`, `Physics`, and `World` for stable use.
+`Ro2D.UI` is a work in progress. It is functional and used in the example
+places, but the API is not final and may change. Rely on `Draw`, `Physics`, and
+`World` for stable use.
 
 ## Contributing
 
-Pull requests and optimization tweaks are highly encouraged. If you find a bottleneck in the buffer manipulations or physics solver, feel free to open an issue or submit a PR.
+Issues and pull requests are welcome, especially around buffer-manipulation and
+physics-solver bottlenecks.
 
 ## License
 
-MIT License. Free to use in your own games and projects.
-
-```
+MIT. Free to use in your own games and projects.

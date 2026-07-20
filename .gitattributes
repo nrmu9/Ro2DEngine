@@ -1,0 +1,9 @@
+# Normalize line endings: store LF in the repo, convert on checkout per platform.
+* text=auto
+
+# Binary assets
+*.png binary
+*.rbxl binary
+*.rbxlx binary
+*.rbxm binary
+*.rbxmx binary

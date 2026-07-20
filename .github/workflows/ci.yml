@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs the tools pinned in rokit.toml (rojo, wally).
+      - uses: CompeyDev/setup-rokit@v0.1.2
+
+      - name: Build model
+        run: rojo build default.project.json --output Ro2DEngine.rbxm
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ro2DEngine-rbxm
+          path: Ro2DEngine.rbxm

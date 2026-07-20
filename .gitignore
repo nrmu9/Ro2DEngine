@@ -1,4 +1,4 @@
-# Project place file
+# Build artifacts (place / model files, produced by Rojo or CI)
 /Ro2DEngine.rbxlx
 /Ro2DEngine.rbxl
 /Ro2DEngine.rbxm
@@ -7,16 +7,20 @@
 /*.rbxlx.lock
 /*.rbxl.lock
 
+# Generated
 sourcemap.json
+wally.lock
 
-# pycache
+# Python
 __pycache__/
 *.pyc
 
-# Editor / local tooling
+# Editor
 .vscode/
 
-# Local test harness (NOT part of the engine — prototyping only)
+# Local dev helpers and test harness (not part of the engine)
 /game/
 /test.project.json
 /test.rbxl
+/roblox_assets/
+count.ps1
