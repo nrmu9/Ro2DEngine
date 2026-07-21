@@ -4,6 +4,16 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-07-21
+
+### Fixed
+- `Draw.Sprite` is placed by its top-left corner again when the parallel
+  renderer is active. The worker forwarded that coordinate straight to the
+  centre-based sprite path, so every `Draw.Sprite` landed half a sprite up and
+  to the left of where the single-threaded renderer puts it. Sprites drawn this
+  way will shift back into place; anything positioned to compensate needs its
+  offset removed.
+
 ## [0.1.0] - 2026-07-20
 
 First tagged release. Consolidates a large body of renderer, physics, and
@@ -38,4 +48,5 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.1.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.1.0
