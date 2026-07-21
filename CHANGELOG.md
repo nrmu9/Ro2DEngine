@@ -32,6 +32,9 @@ tooling work into a versioned package with automated model builds.
 - Faster solid-sprite blit via per-row span copies.
 
 ### Tooling
+- `tools/bake_font.py` compiles a TTF/OTF into the bitmap-font module format
+  read by `Assets.LoadFont`, alongside the existing `tools/png2lua.py` sprite
+  packer. Both are required to author assets for the engine.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 

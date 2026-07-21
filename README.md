@@ -34,17 +34,30 @@ spatial UI, without the overhead of the Roblox GUI system.
 * **Fixed or native resolution.** Render at the native canvas size or a fixed
   internal resolution (letterboxed, with an optional fill mode).
 
-## The asset pipeline: `png2lua`
+## Asset pipeline
 
-Because Ro2D writes pixels directly to memory, standard Roblox image IDs do not
-work. The `png2lua` tool (in `tools/`) compiles `.png` sprites into optimized
-Luau `ModuleScripts`: it packs RGBA data into a string that the engine decodes
-into a `buffer`, and records the sprite's opaque bounds so fully transparent
-rows are skipped at draw time.
+Because Ro2D writes pixels directly to memory, standard Roblox image IDs and
+fonts do not work. Two tools in `tools/` compile assets into Luau
+`ModuleScripts` that the engine decodes into buffers. Both require Pillow
+(`pip install Pillow`).
+
+**Sprites.** `png2lua` packs a `.png` into RGBA data and records the sprite's
+opaque bounds, so fully transparent rows are skipped at draw time.
 
 ```
 python tools/png2lua.py -i sprite.png -o sprite.luau
 ```
+
+**Fonts.** `bake_font` rasterizes a `.ttf`/`.otf` into a packed atlas whose RGB
+is white and whose alpha is glyph coverage, so `Draw.Text` can tint it per call.
+The result is loaded with `Assets.LoadFont`.
+
+```
+python tools/bake_font.py -i Inter.ttf -o Inter.luau -s 40
+```
+
+`-s` sets the native pixel size to rasterize at (default 40); `--atlas-width`
+and `--pad` control packing. The font name defaults to the output filename.
 
 ## Installation
 
