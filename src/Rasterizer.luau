@@ -229,8 +229,15 @@ function Rasterizer:spriteEx(wx, wy, spriteId, scale, rot, tintR, tintG, tintB, 
 	end
 end
 
+-- Draw.Sprite is positioned by its top-left corner, spriteEx by its centre, so
+-- the coordinate has to be converted rather than forwarded. Without this every
+-- Draw.Sprite lands half a sprite up and to the left of where the single
+-- threaded renderer puts it.
 function Rasterizer:sprite(wx, wy, spriteId, flipX, flipY)
-	self:spriteEx(wx, wy, spriteId, 1, 0, 255, 255, 255, 255, flipX, flipY)
+	local sprite = self.sprites[spriteId]
+	if not sprite then return end
+	self:spriteEx(wx + sprite.Width * 0.5, wy + sprite.Height * 0.5, spriteId,
+		1, 0, 255, 255, 255, 255, flipX, flipY)
 end
 
 local strbyte = string.byte
