@@ -10,28 +10,24 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      ROJO_VERSION: "7.7.0"
     steps:
       - uses: actions/checkout@v4
 
-      # Installs the tools pinned in rokit.toml (rojo, wally).
-      - uses: CompeyDev/setup-rokit@v0.1.2
+      - name: Install Rojo
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/rojo.zip" \
+            "https://github.com/rojo-rbx/rojo/releases/download/v$ROJO_VERSION/rojo-$ROJO_VERSION-linux-x86_64.zip"
+          unzip -q "$RUNNER_TEMP/rojo.zip" -d "$RUNNER_TEMP/rojo"
+          chmod +x "$RUNNER_TEMP/rojo/rojo"
+          echo "$RUNNER_TEMP/rojo" >> "$GITHUB_PATH"
 
       - name: Build model
         run: rojo build default.project.json --output Ro2DEngine.rbxm
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.2
         with:
           files: Ro2DEngine.rbxm
           generate_release_notes: true
-
-  # Publishing to the Wally registry is optional. Add a WALLY_TOKEN secret and
-  # uncomment to publish the package on each tagged release.
-  #
-  # wally:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: CompeyDev/setup-rokit@v0.1.2
-  #     - run: wally login --token "${{ secrets.WALLY_TOKEN }}"
-  #     - run: wally publish

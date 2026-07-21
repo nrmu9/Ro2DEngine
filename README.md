@@ -58,15 +58,6 @@ rojo serve
 
 The default project maps `src` to `ReplicatedStorage/Ro2DEngine`.
 
-### Wally
-
-Add Ro2D to your `wally.toml`:
-
-```toml
-[dependencies]
-Ro2D = "nrmu9/ro2dengine@0.1.0"
-```
-
 ### Roblox model
 
 Each tagged release ships a prebuilt `Ro2DEngine.rbxm` on the

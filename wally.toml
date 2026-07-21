@@ -1,6 +1,0 @@
-[package]
-name = "nrmu9/ro2dengine"
-description = "A high-performance software rendering and physics engine utilizing EditableImage."
-version = "0.1.0"
-registry = "https://github.com/UpliftGames/wally-index"
-realm = "shared"
