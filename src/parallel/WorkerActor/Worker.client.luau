@@ -67,6 +67,9 @@ RunService.RenderStepped:ConnectParallel(function()
 	end
 	lastFrame = fid
 	rz:setOffset(ST.camX + BAND_X, ST.camY + BAND_Y)
+	-- Scissor state is per frame: a stream that sets a clip and never clears it
+	-- must not leak into the next frame.
+	rz:resetClip()
 	CommandBuffer.decode(bytes, rz)
 	task.synchronize()
 	image:WritePixelsBuffer(Vector2.zero, imgSize, buf)

@@ -14,6 +14,10 @@ function Rasterizer.new(buf: buffer, bufW: number, bufH: number, sprites, fonts)
 	return setmetatable({
 		buf = buf, w = bufW, h = bufH,
 		ox = 0, oy = 0,
+		-- Inclusive band-local scissor. Every primitive already clamps to the band,
+		-- so clipping is the same clamp against tighter bounds and costs nothing
+		-- when no clip is set.
+		cx0 = 0, cy0 = 0, cx1 = bufW - 1, cy1 = bufH - 1,
 		sprites = sprites or {},
 		fonts = fonts or {},
 	}, Rasterizer)
@@ -21,6 +25,24 @@ end
 
 function Rasterizer:setOffset(ox: number, oy: number)
 	self.ox, self.oy = ox, oy
+end
+
+-- Screen-space, inclusive. Intersected with this worker's band, so a clip that
+-- misses the band entirely leaves it with nothing to draw.
+function Rasterizer:setClip(x0: number, y0: number, x1: number, y1: number)
+	local lx0 = floor(x0 - self.ox)
+	local ly0 = floor(y0 - self.oy)
+	local lx1 = floor(x1 - self.ox)
+	local ly1 = floor(y1 - self.oy)
+	if lx0 < 0 then lx0 = 0 end
+	if ly0 < 0 then ly0 = 0 end
+	if lx1 > self.w - 1 then lx1 = self.w - 1 end
+	if ly1 > self.h - 1 then ly1 = self.h - 1 end
+	self.cx0, self.cy0, self.cx1, self.cy1 = lx0, ly0, lx1, ly1
+end
+
+function Rasterizer:resetClip()
+	self.cx0, self.cy0, self.cx1, self.cy1 = 0, 0, self.w - 1, self.h - 1
 end
 
 function Rasterizer:clear(r, g, b, a)
@@ -54,16 +76,17 @@ end
 
 function Rasterizer:rect(x, y, w, h, r, g, b, a)
 	if w <= 0 or h <= 0 then return end
-	local bw, bh, buf = self.w, self.h, self.buf
+	local bw, buf = self.w, self.buf
+	local cx0, cy0, cx1, cy1 = self.cx0, self.cy0, self.cx1, self.cy1
 	local x0 = floor(x - self.ox)
 	local y0 = floor(y - self.oy)
 	local x1 = x0 + w - 1
 	local y1 = y0 + h - 1
-	if x1 < 0 or y1 < 0 or x0 >= bw or y0 >= bh then return end
-	if x0 < 0 then x0 = 0 end
-	if y0 < 0 then y0 = 0 end
-	if x1 >= bw then x1 = bw - 1 end
-	if y1 >= bh then y1 = bh - 1 end
+	if x1 < cx0 or y1 < cy0 or x0 > cx1 or y0 > cy1 then return end
+	if x0 < cx0 then x0 = cx0 end
+	if y0 < cy0 then y0 = cy0 end
+	if x1 > cx1 then x1 = cx1 end
+	if y1 > cy1 then y1 = cy1 end
 	local aa = a or 255
 	if aa >= 255 then
 		local packed = r + g * 256 + b * 65536 + 0xFF000000
@@ -93,7 +116,8 @@ end
 
 function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
 	if w <= 0 or h <= 0 then return end
-	local bw, bh, buf = self.w, self.h, self.buf
+	local bw, buf = self.w, self.buf
+	local cx0b, cy0b, cx1b, cy1b = self.cx0, self.cy0, self.cx1, self.cy1
 	local cx = wx - self.ox
 	local cy = wy - self.oy
 	local hw, hh = w * 0.5, h * 0.5
@@ -105,11 +129,11 @@ function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
 	if angle == 0 then
 		local minX, maxX = floor(cx - hw), floor(cx + hw)
 		local minY, maxY = floor(cy - hh), floor(cy + hh)
-		if maxX < 0 or maxY < 0 or minX >= bw or minY >= bh then return end
-		if minX < 0 then minX = 0 end
-		if minY < 0 then minY = 0 end
-		if maxX >= bw then maxX = bw - 1 end
-		if maxY >= bh then maxY = bh - 1 end
+		if maxX < cx0b or maxY < cy0b or minX > cx1b or minY > cy1b then return end
+		if minX < cx0b then minX = cx0b end
+		if minY < cy0b then minY = cy0b end
+		if maxX > cx1b then maxX = cx1b end
+		if maxY > cy1b then maxY = cy1b end
 		for py = minY, maxY do
 			local off = (py * bw + minX) * 4
 			for _ = minX, maxX do
@@ -134,11 +158,11 @@ function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
 	local ey = abs(hw * sa) + abs(hh * ca)
 	local minX, maxX = floor(cx - ex), floor(cx + ex)
 	local minY, maxY = floor(cy - ey), floor(cy + ey)
-	if maxX < 0 or maxY < 0 or minX >= bw or minY >= bh then return end
-	if minX < 0 then minX = 0 end
-	if minY < 0 then minY = 0 end
-	if maxX >= bw then maxX = bw - 1 end
-	if maxY >= bh then maxY = bh - 1 end
+	if maxX < cx0b or maxY < cy0b or minX > cx1b or minY > cy1b then return end
+	if minX < cx0b then minX = cx0b end
+	if minY < cy0b then minY = cy0b end
+	if maxX > cx1b then maxX = cx1b end
+	if maxY > cy1b then maxY = cy1b end
 	for py = minY, maxY do
 		local dyc = py - cy
 		local base = py * bw
@@ -167,7 +191,8 @@ function Rasterizer:spriteEx(wx, wy, spriteId, scale, rot, tintR, tintG, tintB, 
 	local sprite = self.sprites[spriteId]
 	if not sprite then return end
 	local sbuf, sw, sh = sprite.Buffer, sprite.Width, sprite.Height
-	local bw, bh, buf = self.w, self.h, self.buf
+	local bw, buf = self.w, self.buf
+	local cx0b, cy0b, cx1b, cy1b = self.cx0, self.cy0, self.cx1, self.cy1
 	local cx = wx - self.ox
 	local cy = wy - self.oy
 	local halfW, halfH = sw * 0.5, sh * 0.5
@@ -177,11 +202,11 @@ function Rasterizer:spriteEx(wx, wy, spriteId, scale, rot, tintR, tintG, tintB, 
 	local ey = (abs(halfW * sa) + abs(halfH * ca)) * scale
 	local minX, maxX = floor(cx - ex), floor(cx + ex)
 	local minY, maxY = floor(cy - ey), floor(cy + ey)
-	if maxX < 0 or maxY < 0 or minX >= bw or minY >= bh then return end
-	if minX < 0 then minX = 0 end
-	if minY < 0 then minY = 0 end
-	if maxX >= bw then maxX = bw - 1 end
-	if maxY >= bh then maxY = bh - 1 end
+	if maxX < cx0b or maxY < cy0b or minX > cx1b or minY > cy1b then return end
+	if minX < cx0b then minX = cx0b end
+	if minY < cy0b then minY = cy0b end
+	if maxX > cx1b then maxX = cx1b end
+	if maxY > cy1b then maxY = cy1b end
 	local tinted = tintR ~= 255 or tintG ~= 255 or tintB ~= 255
 	local rot0 = rot == 0
 
@@ -248,7 +273,8 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 	local font = self.fonts[fontId]
 	if not font or str == "" or scale <= 0 then return end
 	local glyphs, atlas, aw, space = font.Glyphs, font.Buffer, font.Width, font.SpaceAdvance
-	local bw, bh, buf = self.w, self.h, self.buf
+	local bw, buf = self.w, self.buf
+	local cx0b, cy0b, cx1b, cy1b = self.cx0, self.cy0, self.cx1, self.cy1
 	local invScale = 1 / scale
 	local penX = wx
 	for i = 1, #str do
@@ -279,7 +305,7 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 			end
 			for py = 0, dh - 1 do
 				local screenY = oy + py
-				if screenY >= 0 and screenY < bh then
+				if screenY >= cy0b and screenY <= cy1b then
 					local base = screenY * bw
 					local fy0 = py * invScale
 					local fy1 = fy0 + invScale
@@ -291,7 +317,7 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 					for px = 0, dw - 1 do
 						local screenX = ox + px
 						local sxA, nS = colS[px], colN[px]
-						if screenX >= 0 and screenX < bw then
+						if screenX >= cx0b and screenX <= cx1b then
 							local oa
 							if nS == 1 and syA == syB then
 								oa = (readu32(atlas, ((gy + syA) * aw + gx + sxA) * 4) // 16777216) % 256

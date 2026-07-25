@@ -131,6 +131,8 @@ export type Ro2DAPI = {
 		LineSDF: (worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number) -> (),
 		CircleSDF: (worldX: number, worldY: number, radius: number, r: number, g: number, b: number, a: number?) -> (),
 		Clear: (r: number, g: number, b: number, a: number?) -> (),
+		SetClip: (worldX: number, worldY: number, w: number, h: number) -> (),
+		ClearClip: () -> (),
 	},
 	Assets: {
 		LoadSprite: (spriteModule: ModuleScript) -> Sprite,

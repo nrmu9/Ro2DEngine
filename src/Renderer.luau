@@ -165,6 +165,7 @@ local function rebuildGrid()
 
 	UI.Init(CanvasFrame, targetWidth, targetHeight, displayScale, baseOffsetX, baseOffsetY)
 	Renderer.Grid.IsReady = true
+	Renderer.ResetClip()
 end
 
 function Renderer.System.Init(canvasFrame: Frame, config: any)
@@ -277,12 +278,47 @@ local Camera = Renderer.Camera
 
 local EMPTY_OPTS = table.freeze({})
 
+-- Scissor bounds in screen space, inclusive. Every primitive already clamped to
+-- the surface, so clipping is that same clamp against tighter bounds -- there is
+-- no cost when no clip is set, because the default IS the surface.
+local clipX0, clipY0, clipX1, clipY1 = 0, 0, -1, -1
+local function resetClip()
+	clipX0, clipY0 = 0, 0
+	clipX1, clipY1 = Grid.Width - 1, Grid.Height - 1
+end
+Renderer.ResetClip = resetClip
+
+-- Restricts subsequent drawing to a rectangle, in the same world space the draw
+-- calls use. A zero or negative size clips everything away until the clip is
+-- cleared. Clears itself at the end of every frame, so a scene that errors
+-- part-way through cannot leave the next one clipped.
+function Draw.SetClip(worldX: number, worldY: number, w: number, h: number)
+	if not Grid.IsReady then return end
+	if w <= 0 or h <= 0 then
+		clipX0, clipY0, clipX1, clipY1 = 0, 0, -1, -1
+		return
+	end
+	local x0 = floor(worldX - Camera.X)
+	local y0 = floor(worldY - Camera.Y)
+	local x1 = x0 + floor(w) - 1
+	local y1 = y0 + floor(h) - 1
+	if x0 < 0 then x0 = 0 end
+	if y0 < 0 then y0 = 0 end
+	if x1 > Grid.Width - 1 then x1 = Grid.Width - 1 end
+	if y1 > Grid.Height - 1 then y1 = Grid.Height - 1 end
+	clipX0, clipY0, clipX1, clipY1 = x0, y0, x1, y1
+end
+
+function Draw.ClearClip()
+	resetClip()
+end
+
 function Draw.Pixel(worldX: number, worldY: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady then return end
 
 	local x = floor(worldX - Camera.X)
 	local y = floor(worldY - Camera.Y)
-	if x < 0 or x >= Grid.Width or y < 0 or y >= Grid.Height then return end
+	if x < clipX0 or x > clipX1 or y < clipY0 or y > clipY1 then return end
 
 	local chunkRow = Chunks[y // CHUNK_SIZE]
 	if not chunkRow then return end
@@ -308,7 +344,6 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 	local startX = floor(worldX - Camera.X)
 	local startY = floor(worldY - Camera.Y)
 	local w, h, buf, bounds = sprite.Width, sprite.Height, sprite.Buffer, sprite.RowBounds
-	local screenW, screenH = Grid.Width, Grid.Height
 	local solidFast = sprite.SolidRows and not flipX
 
 	for y = 0, h - 1 do
@@ -317,7 +352,7 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 
 		if row.MinX ~= -1 then
 			local drawY = startY + y
-			if drawY >= 0 and drawY < screenH then
+			if drawY >= clipY0 and drawY <= clipY1 then
 				local chunkRow = Chunks[drawY // CHUNK_SIZE]
 				if chunkRow then
 					local localY = drawY % CHUNK_SIZE
@@ -326,8 +361,8 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 					if solidFast then
 						local spanStart = startX + row.MinX
 						local spanEnd = startX + row.MaxX
-						if spanStart < 0 then spanStart = 0 end
-						if spanEnd >= screenW then spanEnd = screenW - 1 end
+						if spanStart < clipX0 then spanStart = clipX0 end
+						if spanEnd > clipX1 then spanEnd = clipX1 end
 
 						local sx = spanStart
 						while sx <= spanEnd do
@@ -364,8 +399,8 @@ function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean
 						local chunk = chunkRow[chunkX]
 
 						for destX = destMinX, destMaxX do
-							if startDrawX >= screenW then break end
-							if chunk and startDrawX >= 0 then
+							if startDrawX > clipX1 then break end
+							if chunk and startDrawX >= clipX0 then
 								local readX = if flipX then (w - 1 - destX) else destX
 								local src = readu32(buf, srcRowOffset + readX * 4)
 								if src > ALPHA_MASK then
@@ -403,7 +438,6 @@ function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 	local flipX, flipY = opts.FlipX == true, opts.FlipY == true
 
 	local w, h, buf = sprite.Width, sprite.Height, sprite.Buffer
-	local screenW, screenH = Grid.Width, Grid.Height
 	local cx = worldX - Camera.X
 	local cy = worldY - Camera.Y
 	local ca, sa = cos(rot), sin(rot)
@@ -413,11 +447,11 @@ function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 
 	local minX, maxX = floor(cx - ex), floor(cx + ex)
 	local minY, maxY = floor(cy - ey), floor(cy + ey)
-	if maxX < 0 or maxY < 0 or minX >= screenW or minY >= screenH then return end
-	if minX < 0 then minX = 0 end
-	if minY < 0 then minY = 0 end
-	if maxX >= screenW then maxX = screenW - 1 end
-	if maxY >= screenH then maxY = screenH - 1 end
+	if maxX < clipX0 or maxY < clipY0 or minX > clipX1 or minY > clipY1 then return end
+	if minX < clipX0 then minX = clipX0 end
+	if minY < clipY0 then minY = clipY0 end
+	if maxX > clipX1 then maxX = clipX1 end
+	if maxY > clipY1 then maxY = clipY1 end
 
 	local invScale = 1 / scale
 	local halfW, halfH = w * 0.5, h * 0.5
@@ -546,7 +580,6 @@ function Draw.Text(worldX: number, worldY: number, text: string, font: any, opts
 	local tinted = tintR ~= nil
 	local alpha = opts.Alpha or 255
 	local glyphs, atlas, aw, space = font.Glyphs, font.Buffer, font.Width, font.SpaceAdvance
-	local screenW, screenH = Grid.Width, Grid.Height
 	local invScale = 1 / scale
 
 	local penX = worldX
@@ -592,7 +625,7 @@ function Draw.Text(worldX: number, worldY: number, text: string, font: any, opts
 			end
 			for py = 0, dh - 1 do
 				local screenY = oy + py
-				if screenY >= 0 and screenY < screenH then
+				if screenY >= clipY0 and screenY <= clipY1 then
 					local chunkRow = Chunks[screenY // CHUNK_SIZE]
 					if chunkRow then
 						local localY = screenY % CHUNK_SIZE
@@ -605,7 +638,7 @@ function Draw.Text(worldX: number, worldY: number, text: string, font: any, opts
 						for px = 0, dw - 1 do
 							local screenX = ox + px
 							local sxA, nS = txtColS[px], txtColN[px]
-							if screenX >= 0 and screenX < screenW then
+							if screenX >= clipX0 and screenX <= clipX1 then
 								local oa
 								if nS == 1 and syA == syB then
 									oa = (readu32(atlas, ((gy + syA) * aw + gx + sxA) * 4) // 16777216) % 256
@@ -667,17 +700,16 @@ end
 function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady or w <= 0 or h <= 0 then return end
 
-	local screenW, screenH = Grid.Width, Grid.Height
 	local x0 = floor(worldX - Camera.X)
 	local y0 = floor(worldY - Camera.Y)
 	local x1 = x0 + w - 1
 	local y1 = y0 + h - 1
-	if x1 < 0 or y1 < 0 or x0 >= screenW or y0 >= screenH then return end
+	if x1 < clipX0 or y1 < clipY0 or x0 > clipX1 or y0 > clipY1 then return end
 
-	if x0 < 0 then x0 = 0 end
-	if y0 < 0 then y0 = 0 end
-	if x1 >= screenW then x1 = screenW - 1 end
-	if y1 >= screenH then y1 = screenH - 1 end
+	if x0 < clipX0 then x0 = clipX0 end
+	if y0 < clipY0 then y0 = clipY0 end
+	if x1 > clipX1 then x1 = clipX1 end
+	if y1 > clipY1 then y1 = clipY1 end
 
 	local aa = a or 255
 
@@ -723,7 +755,6 @@ end
 
 function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady or w <= 0 or h <= 0 then return end
-	local screenW, screenH = Grid.Width, Grid.Height
 	local cx = worldX - Camera.X
 	local cy = worldY - Camera.Y
 	local ca, sa = cos(angle), sin(angle)
@@ -733,11 +764,11 @@ function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, 
 
 	local minX, maxX = floor(cx - ex), floor(cx + ex)
 	local minY, maxY = floor(cy - ey), floor(cy + ey)
-	if maxX < 0 or maxY < 0 or minX >= screenW or minY >= screenH then return end
-	if minX < 0 then minX = 0 end
-	if minY < 0 then minY = 0 end
-	if maxX >= screenW then maxX = screenW - 1 end
-	if maxY >= screenH then maxY = screenH - 1 end
+	if maxX < clipX0 or maxY < clipY0 or minX > clipX1 or minY > clipY1 then return end
+	if minX < clipX0 then minX = clipX0 end
+	if minY < clipY0 then minY = clipY0 end
+	if maxX > clipX1 then maxX = clipX1 end
+	if maxY > clipY1 then maxY = clipY1 end
 
 	a = a or 255
 	local blend = a < 255
@@ -906,6 +937,9 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 	end
 
 	if overlayFn then pcall(overlayFn) end
+	-- End of frame: scissor state is per frame, so the next one starts unclipped
+	-- even if a scene set a clip and never cleared it.
+	resetClip()
 
 	for i = 1, #ChunkList do
 		local chunk = ChunkList[i]

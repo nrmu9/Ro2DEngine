@@ -16,6 +16,7 @@ local OP = {
 	SPRITE_EX = 5,
 	TEXT = 6,
 	TINT = 7,
+	CLIP = 8,
 }
 CommandBuffer.OP = OP
 
@@ -58,6 +59,17 @@ function CommandBuffer:tint(r, g, b, a)
 	wu8(buf, c, OP.TINT)
 	wu8(buf, c + 1, r); wu8(buf, c + 2, g); wu8(buf, c + 3, b); wu8(buf, c + 4, a)
 	self.cur = c + 5
+end
+
+-- Scissor state, in screen space and inclusive. Recorded in the stream rather
+-- than sent out of band because it has to take effect at the point in the frame
+-- where it was set, not for the whole frame.
+function CommandBuffer:clip(x0, y0, x1, y1)
+	self:_need(17)
+	local buf, c = self.buf, self.cur
+	wu8(buf, c, OP.CLIP)
+	wf32(buf, c + 1, x0); wf32(buf, c + 5, y0); wf32(buf, c + 9, x1); wf32(buf, c + 13, y1)
+	self.cur = c + 17
 end
 
 function CommandBuffer:rect(x, y, w, h, r, g, b, a)
@@ -133,6 +145,9 @@ function CommandBuffer.decode(bytes: string, h)
 		elseif op == OP.TINT then
 			h:tint(ru8(buf, c + 1), ru8(buf, c + 2), ru8(buf, c + 3), ru8(buf, c + 4))
 			c += 5
+		elseif op == OP.CLIP then
+			h:setClip(rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13))
+			c += 17
 		elseif op == OP.RECT then
 			h:rect(rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13),
 				ru8(buf, c + 17), ru8(buf, c + 18), ru8(buf, c + 19), ru8(buf, c + 20))

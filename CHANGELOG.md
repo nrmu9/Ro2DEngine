@@ -4,6 +4,23 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-25
+
+### Added
+- Scissor clipping: `Draw.SetClip(x, y, w, h)` restricts subsequent drawing to a
+  rectangle, `Draw.ClearClip()` restores the full surface. Coordinates are in the
+  same world space as the draw calls, and a zero or negative size clips everything
+  away until the clip is cleared.
+
+  Every primitive honours it, including text, which previously could not be cut
+  off mid-glyph — scrolling lists had to fade their contents out instead. Works in
+  both renderers: the parallel path records it as a command so it takes effect at
+  the right point in the frame, and each worker intersects it with its own band.
+
+  The clip resets to the full surface at the end of every frame, so a scene that
+  errors part-way through cannot leave the next one clipped. `Draw.Clear` and the
+  global tint are whole-frame operations and ignore it.
+
 ## [0.1.1] - 2026-07-21
 
 ### Fixed
@@ -48,5 +65,6 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.2.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.0
 [0.1.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.1.0

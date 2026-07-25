@@ -135,7 +135,9 @@ All `Draw` calls operate in world space (offset by `Ro2D.Camera`). Colors are
 | `Draw.MeasureText(text, font, scale?)` | Pixel width of a text string. |
 | `Draw.CircleSDF(x, y, radius, r, g, b, a?)` | Anti-aliased filled circle. |
 | `Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)` | Anti-aliased line. |
-| `Draw.Clear(r, g, b, a?)` | Fill the whole canvas. |
+| `Draw.Clear(r, g, b, a?)` | Fill the whole canvas. Ignores the clip. |
+| `Draw.SetClip(x, y, w, h)` | Restrict subsequent drawing to a rectangle. Cuts text off mid-glyph, so scrolling lists need no fade. |
+| `Draw.ClearClip()` | Restore drawing to the full surface. |
 
 `Assets.LoadSprite` and `Assets.LoadFont` cache their result per `ModuleScript`,
 so requiring the same asset again is free after the first decode.

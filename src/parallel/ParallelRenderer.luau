@@ -75,6 +75,21 @@ end
 function PR.Draw.Clear(r, g, b, a)
 	if PR.IsReady then cb:clear(r, g, b, a) end
 end
+-- Restricts subsequent drawing to a rectangle, in the same world space the draw
+-- calls use. Resets to the whole surface at the start of every frame, so a scene
+-- that errors part-way through cannot leave the next one clipped.
+function PR.Draw.SetClip(x, y, w, h)
+	if not PR.IsReady then return end
+	if w <= 0 or h <= 0 then
+		cb:clip(0, 0, -1, -1) -- empty: nothing draws until the clip is cleared
+		return
+	end
+	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
+	cb:clip(x0, y0, x0 + w - 1, y0 + h - 1)
+end
+function PR.Draw.ClearClip()
+	if PR.IsReady then cb:clip(0, 0, PR.Width - 1, PR.Height - 1) end
+end
 function PR.Draw.Rect(x, y, w, h, r, g, b, a)
 	if PR.IsReady then cb:rect(x - PR.Camera.X, y - PR.Camera.Y, w, h, r, g, b, a) end
 end
