@@ -1,4 +1,5 @@
 --!optimize 2
+--!native
 
 local Physics = require(script.Parent:WaitForChild("Physics"))
 

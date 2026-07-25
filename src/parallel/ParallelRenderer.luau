@@ -1,4 +1,5 @@
 --!optimize 2
+--!native
 
 local RunService = game:GetService("RunService")
 local SharedTableRegistry = game:GetService("SharedTableRegistry")
