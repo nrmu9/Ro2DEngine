@@ -4,6 +4,18 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-07-25
+
+### Performance
+- `ParallelRenderer` and `World` are compiled with `--!native`. The recorder runs
+  per-call arithmetic and buffer writes once per primitive per frame, and `World`
+  runs the AABB and radial solvers; both are numeric enough to be worth it. The
+  rasterizer, renderer, command buffer and worker were already marked.
+
+  Native code generation is platform-dependent. Where it is unavailable the
+  script falls back to the interpreter and Studio logs "Native code generation
+  not initialized" — that is a fallback notice, not an error.
+
 ## [0.2.0] - 2026-07-25
 
 ### Added
@@ -65,6 +77,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.2.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.1
 [0.2.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.0
 [0.1.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.1.0
