@@ -17,9 +17,8 @@ __pycache__/
 # Editor
 .vscode/
 
-# Local dev helpers and test harness (not part of the engine)
+# Local dev helpers and the game built on this engine (its own repo)
 /game/
 /test.project.json
 /test.rbxl
-/roblox_assets/
 count.ps1
