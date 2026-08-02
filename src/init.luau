@@ -235,6 +235,25 @@ end
 
 local SystemWrap = setmetatable({}, { __index = Renderer.System })
 function SystemWrap.SetFade() end
+
+-- The overlay is owned here rather than by a renderer. Each renderer keeps its
+-- own copy, and a scene that switches between them (parallel menus, a serial
+-- fight) would otherwise leave one of them holding nothing -- which is how a
+-- debug overlay registered once at start-up came to vanish the moment a fight
+-- began. Kept at this level and re-applied on every Init, it survives the swap.
+local overlayFn = nil
+local function applyOverlay()
+	if activeIsParallel and ParallelRenderer then
+		ParallelRenderer.System.SetOverlay(overlayFn)
+	else
+		Renderer.System.SetOverlay(overlayFn)
+	end
+end
+function SystemWrap.SetOverlay(fn)
+	overlayFn = fn
+	applyOverlay()
+end
+
 function SystemWrap.Init(canvasFrame, config)
 	if config and config.Isolate2D then applyIsolate2D() end
 	if config and config.Parallel then
@@ -251,11 +270,12 @@ function SystemWrap.Init(canvasFrame, config)
 		SystemWrap.SetImmediateMode = ParallelRenderer.System.SetImmediateMode
 		SystemWrap.ScreenToCanvas = ParallelRenderer.System.ScreenToCanvas
 		SystemWrap.SetResolution = ParallelRenderer.System.SetResolution
-		SystemWrap.SetOverlay = ParallelRenderer.System.SetOverlay
 	else
 		activeIsParallel = false
 		Renderer.System.Init(canvasFrame, config)
 	end
+	-- Last, so it lands on whichever renderer this Init just made current.
+	applyOverlay()
 end
 
 Ro2D = {
