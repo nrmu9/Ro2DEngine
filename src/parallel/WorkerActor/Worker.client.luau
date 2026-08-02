@@ -27,7 +27,17 @@ local OFF_X, OFF_Y = A("OffsetX"), A("OffsetY")
 local PIXELATED = A("Pixelated") == 1
 
 local imgSize = Vector2.new(BAND_W, BAND_H)
-local image = AssetService:CreateEditableImage({ Size = imgSize })
+-- EditableImage is gated behind an experience setting, and the check that decides
+-- whether it is available can also just fail to reach Roblox. Either way there is
+-- no canvas to draw into, so say so once and stop rather than letting every worker
+-- raise it on every frame for the length of a session.
+local imgOk, image = pcall(function()
+	return AssetService:CreateEditableImage({ Size = imgSize })
+end)
+if not imgOk or image == nil then
+	warn("[Ro2D] EditableImage unavailable, this worker will not draw: " .. tostring(image))
+	return
+end
 local frame = Instance.new("ImageLabel")
 frame.Name = string.format("PWorker_%d_%d", BAND_X, BAND_Y)
 frame.BackgroundTransparency = 1
@@ -56,6 +66,11 @@ end)
 local ST = SharedTableRegistry:GetSharedTable("Ro2D_Frame")
 local lastFrame = -1
 
+-- The write can start failing at any point in a session (the API status is
+-- fetched, not fixed), and it runs once per worker per frame. Reported the first
+-- time and never again: fifty thousand copies of one message is not a log.
+local writeWarned = false
+
 RunService.RenderStepped:ConnectParallel(function()
 	local fid = ST.frame
 	if fid == nil or fid == lastFrame then
@@ -72,7 +87,11 @@ RunService.RenderStepped:ConnectParallel(function()
 	rz:resetClip()
 	CommandBuffer.decode(bytes, rz)
 	task.synchronize()
-	image:WritePixelsBuffer(Vector2.zero, imgSize, buf)
+	local ok, err = pcall(image.WritePixelsBuffer, image, Vector2.zero, imgSize, buf)
+	if not ok and not writeWarned then
+		writeWarned = true
+		warn("[Ro2D] canvas write failed, further errors suppressed: " .. tostring(err))
+	end
 end)
 
 SharedTable.update(ST, "ready", function(v)

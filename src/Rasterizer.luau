@@ -6,6 +6,10 @@ local readu32, writeu32 = buffer.readu32, buffer.writeu32
 local floor, abs, min, max = math.floor, math.abs, math.min, math.max
 local ceil = math.ceil
 local cos, sin = math.cos, math.sin
+local HUGE = math.huge
+-- Below this the axis is treated as exactly zero, so a near-axis-aligned rect
+-- divides by a sane number instead of producing an enormous span.
+local EPS = 1e-9
 
 local Rasterizer = {}
 Rasterizer.__index = Rasterizer
@@ -163,10 +167,39 @@ function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
 	if minY < cy0b then minY = cy0b end
 	if maxX > cx1b then maxX = cx1b end
 	if maxY > cy1b then maxY = cy1b end
+	-- Per scanline, the exact x-range the rotated rect covers, rather than the whole
+	-- of its bounding box. A long thin bar at 45 degrees -- which is every connector
+	-- in a tree view and every glyph stroke -- has a bounding box hundreds of times
+	-- its own area, and testing all of it was enough to exhaust a parallel worker's
+	-- execution budget on a single frame.
+	--
+	-- The range is widened by a pixel each side and the original test is kept, so
+	-- this narrows what is visited without changing what is drawn.
 	for py = minY, maxY do
 		local dyc = py - cy
 		local base = py * bw
-		for px = minX, maxX do
+		local lo, hi = -HUGE, HUGE
+		-- |lx| <= hw  =>  dxc * ca within these bounds
+		local alo, ahi = -hw - dyc * sa, hw - dyc * sa
+		if ca > EPS then
+			lo, hi = alo / ca, ahi / ca
+		elseif ca < -EPS then
+			lo, hi = ahi / ca, alo / ca
+		elseif alo > 0 or ahi < 0 then
+			continue -- the row misses the slab entirely
+		end
+		-- |ly| <= hh  =>  dxc * sa within these
+		local blo, bhi = dyc * ca - hh, dyc * ca + hh
+		if sa > EPS then
+			lo, hi = max(lo, blo / sa), min(hi, bhi / sa)
+		elseif sa < -EPS then
+			lo, hi = max(lo, bhi / sa), min(hi, blo / sa)
+		elseif blo > 0 or bhi < 0 then
+			continue
+		end
+		local rowMin = max(minX, floor(cx + lo) - 1)
+		local rowMax = min(maxX, ceil(cx + hi) + 1)
+		for px = rowMin, rowMax do
 			local dxc = px - cx
 			local lx = dxc * ca + dyc * sa
 			local ly = dyc * ca - dxc * sa
