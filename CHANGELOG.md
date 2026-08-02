@@ -4,6 +4,30 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-08-02
+
+### Fixed
+- An overlay is drawn in screen space. Every draw call bakes the camera in as it
+  is recorded and the overlay was recorded like any other drawing, so in a scene
+  whose camera follows something it was carried along, moving around the screen
+  and leaving it entirely once the camera was far enough from the origin. The
+  camera is zeroed for the duration of the callback and restored after, in both
+  renderers.
+
+  The pointer was already reported in canvas space with no camera in it, so
+  hit-testing inside an overlay had been wrong by the same offset. The two agree
+  now.
+
+- An overlay that errors is reported once rather than swallowed. It runs every
+  frame, so the choice was between silence and tens of thousands of lines, and
+  silence makes an overlay drawn off screen indistinguishable from one that was
+  never called.
+
+- `System.SetOverlay` survives a re-init. The callback was stored on whichever
+  renderer was current when it was registered, so a place that re-initialised the
+  engine between a parallel scene and a serial one lost it. It is held above both
+  renderers now and re-applied at the end of every `Init`.
+
 ## [0.2.2] - 2026-08-02
 
 ### Fixed
@@ -114,6 +138,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.2.3]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.3
 [0.2.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.2
 [0.2.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.1
 [0.2.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.0
