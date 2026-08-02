@@ -15,6 +15,8 @@ local PR = {}
 PR.Draw = {}
 PR.System = {}
 PR.Camera = { X = 0, Y = 0 }
+-- One report per session for a failing overlay: it runs every frame.
+local overlayWarned = false
 PR.Width = 0
 PR.Height = 0
 PR.IsReady = false
@@ -246,7 +248,24 @@ function PR.System.Init(canvasFrame, config)
 		if (PR._fadeA or 0) > 0 then
 			cb:tint(0, 0, 0, PR._fadeA)
 		end
-		if PR._overlay then pcall(PR._overlay) end
+		if PR._overlay then
+		-- An overlay is screen space by definition: it is drawn after the world and
+		-- has nothing to do with where the camera is looking. Every draw call bakes
+		-- the camera in as it is recorded, so it is zeroed for the duration -- a
+		-- fight's camera was otherwise carrying the overlay off screen with it, and
+		-- moving it around while it went.
+		--
+		-- Errors are reported once. This runs every frame, so one bad overlay would
+		-- otherwise be either silent or fifty thousand lines of log.
+			local ocx, ocy = PR.Camera.X, PR.Camera.Y
+			PR.Camera.X, PR.Camera.Y = 0, 0
+			local ok, err = pcall(PR._overlay)
+			PR.Camera.X, PR.Camera.Y = ocx, ocy
+			if not ok and not overlayWarned then
+				overlayWarned = true
+				warn("[Ro2D] overlay error, further errors suppressed: " .. tostring(err))
+			end
+		end
 		local bytes = cb:serialize()
 		ST.camX = 0
 		ST.camY = 0

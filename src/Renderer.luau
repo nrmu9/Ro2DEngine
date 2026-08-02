@@ -920,6 +920,8 @@ function Draw.Clear(r: number, g: number, b: number, a: number?)
 end
 
 local overlayFn = nil
+-- One report per session for a failing overlay: it runs every frame.
+local overlayWarned = false
 function Renderer.System.SetOverlay(fn) overlayFn = fn end
 
 local wasReady = false
@@ -936,7 +938,19 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 		if DeveloperBackgroundCode then Renderer.System.SetBackground(DeveloperBackgroundCode) end
 	end
 
-	if overlayFn then pcall(overlayFn) end
+	if overlayFn then
+		-- An overlay is screen space by definition: it is drawn after the world and
+		-- has nothing to do with where the camera is looking. Every draw call bakes
+		-- the camera in, so it is zeroed for the duration.
+		local ocx, ocy = Camera.X, Camera.Y
+		Camera.X, Camera.Y = 0, 0
+		local ok, err = pcall(overlayFn)
+		Camera.X, Camera.Y = ocx, ocy
+		if not ok and not overlayWarned then
+			overlayWarned = true
+			warn("[Ro2D] overlay error, further errors suppressed: " .. tostring(err))
+		end
+	end
 	-- End of frame: scissor state is per frame, so the next one starts unclipped
 	-- even if a scene set a clip and never cleared it.
 	resetClip()
