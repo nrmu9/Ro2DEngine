@@ -4,6 +4,43 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-02
+
+### Fixed
+- The gamepad cursor is driven by whichever pad the player is holding, not by
+  `Gamepad1`. `LastInputTypeChanged` only turned `GamepadActive` on for that one
+  and the stick was only ever read from it, so a controller that enumerated
+  anywhere else left the cursor invisible and immobile. Another pad paired ahead
+  of it, or a reconnect, is enough to move it, and on a console that leaves
+  nothing to click with.
+
+  The active pad is picked from the navigation gamepads, corrected by any pad
+  input that arrives, updated on connect and disconnect, and re-picked while none
+  is known. The last part covers joining: the pad list can still be empty as
+  `Input` loads, and a stick sends `InputChanged` rather than `InputBegan`, so a
+  player who only pushes the stick announces themselves no other way.
+
+- A worker that cannot write to its `EditableImage` says so once instead of on
+  every frame. The API is gated behind an experience setting and the check that
+  decides whether it is available can also fail to reach Roblox; that write runs
+  once per worker per frame, so a session could produce tens of thousands of
+  copies of one message. A worker that cannot create its image at all now stands
+  down rather than erroring forever.
+
+### Performance
+- `Rasterizer.rectRot` scans only the pixels a rotated rect covers. It walked the
+  whole axis-aligned bounding box and tested every pixel in it, which for a long
+  thin bar at an angle is around a hundred times the bar's own area: a 900px bar
+  three pixels thick at sixty degrees came to 317,800 tests to paint 2,700
+  pixels. At ninety-odd such bars in a frame that was enough to exhaust a
+  parallel worker's allowed execution time, reported as "Script timeout:
+  exhausted allowed execution time for the current resumption point".
+
+  Each scanline now solves for the x-range the rect actually covers, widened by a
+  pixel each side, with the original per-pixel test kept inside it. Output is
+  unchanged, verified pixel for pixel against the old predicate over four hundred
+  randomised rects.
+
 ## [0.2.1] - 2026-07-25
 
 ### Performance
@@ -77,6 +114,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.2.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.2
 [0.2.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.1
 [0.2.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.0
 [0.1.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.1.1
