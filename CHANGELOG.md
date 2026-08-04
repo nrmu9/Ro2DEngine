@@ -4,6 +4,37 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-04
+
+### Added
+- `System.SkipFrame()` declares a frame identical to the one already on screen.
+  The canvas is persistent, so a frame that would paint the same pixels does not
+  need to be painted: under the parallel renderer nothing is decoded and no image
+  is uploaded, and the workers keep what they have. It exists on the serial
+  renderer too, where the flush already uploads only what changed, so that a
+  caller never has to ask which renderer it is talking to.
+
+  Called instead of drawing rather than after it, and for one frame only. A
+  screen sitting behind a settled modal is the case it is for.
+
+### Fixed
+- `Draw.Text` clips to the visible range instead of walking the whole glyph.
+  Both loops in the blit ran the glyph's full size and tested each pixel from the
+  inside, so a glyph scrolled off an edge, or simply drawn large, spun through
+  its entire area to paint a sliver of it or none at all. A band's whole frame
+  runs on one resumption in a parallel worker and Roblox kills a resumption that
+  overruns its budget, so this showed up as workers timing out rather than as
+  anything merely slow.
+
+  The visible column and row ranges are computed once from the clip, and the
+  per-column sample weights are looked up by index rather than carried as a
+  running total through columns the blit no longer visits.
+
+- A failed canvas write is reported once for the canvas rather than once per
+  worker. Every worker writes its own band of the same image, so a failure is
+  nearly always all of them failing together on the same cause, and each was
+  suppressing only its own repeats.
+
 ## [0.2.3] - 2026-08-02
 
 ### Fixed
@@ -138,6 +169,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.3.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.3.0
 [0.2.3]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.3
 [0.2.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.2
 [0.2.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.1
