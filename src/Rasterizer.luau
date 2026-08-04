@@ -299,9 +299,10 @@ function Rasterizer:sprite(wx, wy, spriteId, flipX, flipY)
 end
 
 local strbyte = string.byte
-local colS = table.create(512, 0)
-local colN = table.create(512, 0)
-local colW = table.create(2048, 0)
+local colS = table.create(2048, 0)
+local colN = table.create(2048, 0)
+local colO = table.create(2048, 0)
+local colW = table.create(4096, 0)
 function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 	local font = self.fonts[fontId]
 	if not font or str == "" or scale <= 0 then return end
@@ -318,8 +319,28 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 			local ox = floor(penX + g.OX * scale - self.ox)
 			local oy = floor(wy + g.OY * scale - self.oy)
 			local dw, dh = floor(gW * scale), floor(gH * scale)
+			-- Only the part of the glyph that can land inside the clip.
+			--
+			-- Both loops used to walk the glyph's FULL size and test each pixel from
+			-- the inside, so a glyph scrolled off the edge -- or simply drawn large --
+			-- spun through its whole area to paint a sliver of it or none of it. In a
+			-- parallel worker that is not merely slow: the band's whole frame runs on
+			-- one resumption, and Roblox kills a resumption that overruns its budget.
+			-- Text was the largest single contributor to that, and the workers were
+			-- dying inside this function.
+			--
+			-- The ranges are exact, so the per-pixel bounds tests below go with them.
+			local pxA = cx0b - ox
+			if pxA < 0 then pxA = 0 end
+			local pxB = cx1b - ox
+			if pxB > dw - 1 then pxB = dw - 1 end
+			local pyA = cy0b - oy
+			if pyA < 0 then pyA = 0 end
+			local pyB = cy1b - oy
+			if pyB > dh - 1 then pyB = dh - 1 end
+
 			local wIdx = 0
-			for px = 0, dw - 1 do
+			for px = pxA, pxB do
 				local fx0 = px * invScale
 				local fx1 = fx0 + invScale
 				if fx1 > gW then fx1 = gW end
@@ -327,6 +348,10 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 				local sxB = ceil(fx1) - 1
 				colS[px] = sxA
 				colN[px] = sxB - sxA + 1
+				-- Where this column's weights start. It used to be carried as a
+				-- running total through the blit, which only works if the blit visits
+				-- every column -- and it no longer does.
+				colO[px] = wIdx
 				local sx = sxA
 				while sx <= sxB do
 					local lo = sx > fx0 and sx or fx0
@@ -336,58 +361,51 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 					sx += 1
 				end
 			end
-			for py = 0, dh - 1 do
-				local screenY = oy + py
-				if screenY >= cy0b and screenY <= cy1b then
-					local base = screenY * bw
-					local fy0 = py * invScale
-					local fy1 = fy0 + invScale
-					if fy1 > gH then fy1 = gH end
-					local syA = floor(fy0)
-					local syB = ceil(fy1) - 1
-					local invArea = 1 / ((fy1 - fy0) * invScale)
-					local wCol = 0
-					for px = 0, dw - 1 do
-						local screenX = ox + px
-						local sxA, nS = colS[px], colN[px]
-						if screenX >= cx0b and screenX <= cx1b then
-							local oa
-							if nS == 1 and syA == syB then
-								oa = (readu32(atlas, ((gy + syA) * aw + gx + sxA) * 4) // 16777216) % 256
-							else
-								local acc = 0
-								local sy = syA
-								while sy <= syB do
-									local wy = min(sy + 1, fy1) - (sy > fy0 and sy or fy0)
-									if wy > 0 then
-										local rowoff = (gy + sy) * aw + gx
-										for k = 0, nS - 1 do
-											local a = (readu32(atlas, (rowoff + sxA + k) * 4) // 16777216) % 256
-											if a > 0 then acc += a * colW[wCol + k] * wy end
-										end
-									end
-									sy += 1
-								end
-								oa = floor(acc * invArea + 0.5)
-								if oa > 255 then oa = 255 end
-							end
-							if alpha ~= 255 then oa = (oa * alpha) // 255 end
-							if oa > 0 then
-								local off = (base + screenX) * 4
-								if oa >= 255 then
-									writeu32(buf, off, tr + tg * 256 + tb * 65536 + 0xFF000000)
-								else
-									local dst = readu32(buf, off)
-									local ia = 255 - oa
-									writeu32(buf, off,
-										(tr * oa + (dst % 256) * ia) // 255
-										+ ((tg * oa + (dst // 256 % 256) * ia) // 255) * 256
-										+ ((tb * oa + (dst // 65536 % 256) * ia) // 255) * 65536
-										+ 0xFF000000)
+			for py = pyA, pyB do
+				local base = (oy + py) * bw
+				local fy0 = py * invScale
+				local fy1 = fy0 + invScale
+				if fy1 > gH then fy1 = gH end
+				local syA = floor(fy0)
+				local syB = ceil(fy1) - 1
+				local invArea = 1 / ((fy1 - fy0) * invScale)
+				for px = pxA, pxB do
+					local sxA, nS = colS[px], colN[px]
+					local wCol = colO[px]
+					local oa
+					if nS == 1 and syA == syB then
+						oa = (readu32(atlas, ((gy + syA) * aw + gx + sxA) * 4) // 16777216) % 256
+					else
+						local acc = 0
+						local sy = syA
+						while sy <= syB do
+							local wy = min(sy + 1, fy1) - (sy > fy0 and sy or fy0)
+							if wy > 0 then
+								local rowoff = (gy + sy) * aw + gx
+								for k = 0, nS - 1 do
+									local a = (readu32(atlas, (rowoff + sxA + k) * 4) // 16777216) % 256
+									if a > 0 then acc += a * colW[wCol + k] * wy end
 								end
 							end
+							sy += 1
 						end
-						wCol += nS
+						oa = floor(acc * invArea + 0.5)
+						if oa > 255 then oa = 255 end
+					end
+					if alpha ~= 255 then oa = (oa * alpha) // 255 end
+					if oa > 0 then
+						local off = (base + ox + px) * 4
+						if oa >= 255 then
+							writeu32(buf, off, tr + tg * 256 + tb * 65536 + 0xFF000000)
+						else
+							local dst = readu32(buf, off)
+							local ia = 255 - oa
+							writeu32(buf, off,
+								(tr * oa + (dst % 256) * ia) // 255
+								+ ((tg * oa + (dst // 256 % 256) * ia) // 255) * 256
+								+ ((tb * oa + (dst // 65536 % 256) * ia) // 255) * 65536
+								+ 0xFF000000)
+						end
 					end
 				end
 			end
