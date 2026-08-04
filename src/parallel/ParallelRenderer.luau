@@ -237,6 +237,14 @@ function PR.System.Init(canvasFrame, config)
 	if presentConn then presentConn:Disconnect() end
 	presentConn = RunService:BindToRenderStep("Ro2DParallelPresent", Enum.RenderPriority.Last.Value + 1, function()
 		if not PR.IsReady then return end
+		-- A frame the caller says is identical to the last one is not presented at
+		-- all: the workers keep the pixels they already wrote, so nothing is
+		-- decoded and nothing is uploaded. See System.SkipFrame.
+		if PR._skip then
+			PR._skip = false
+			cb:reset()
+			return
+		end
 		local rdy = ST.ready or 0
 		if rdy ~= lastReady then
 			lastReady = rdy
@@ -308,6 +316,24 @@ end
 function PR.System.SetBackground()
 	return false
 end
+-- Declares this frame identical to the one on screen.
+--
+-- The canvas is persistent: workers write their band and it stays written, so a
+-- frame that would paint exactly the same pixels does not need to be painted. A
+-- scene sitting behind a settled modal is the case this exists for -- the panel
+-- has finished fading, nothing under it is moving, and the composite on screen is
+-- already the answer. Compositing it again every frame costs a full decode and a
+-- full image upload per worker to produce the picture that is already there.
+--
+-- Called INSTEAD of drawing, not after it: the command buffer is discarded, so
+-- anything recorded before this is thrown away rather than deferred.
+--
+-- One frame only. Every frame that should hold has to say so, which is what stops
+-- a scene forgetting to start drawing again.
+function PR.System.SkipFrame()
+	PR._skip = true
+end
+
 function PR.System.SetImmediateMode() end
 
 return PR

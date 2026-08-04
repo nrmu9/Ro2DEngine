@@ -116,6 +116,7 @@ export type Ro2DAPI = {
 		ScreenToCanvas: (screenX: number, screenY: number) -> (number, number),
 		SetBackground: (callback: () -> ()) -> (),
 		SetImmediateMode: (on: boolean) -> (),
+		SkipFrame: () -> (),
 		SetTint: (r: number, g: number, b: number, alpha: number) -> (),
 		SetFade: (alpha: number) -> (),
 		SetResolution: (res: Vector2?, fill: boolean?) -> (),
@@ -268,6 +269,7 @@ function SystemWrap.Init(canvasFrame, config)
 		SystemWrap.SetFade = ParallelRenderer.System.SetFade
 		SystemWrap.SetBackground = ParallelRenderer.System.SetBackground
 		SystemWrap.SetImmediateMode = ParallelRenderer.System.SetImmediateMode
+		SystemWrap.SkipFrame = ParallelRenderer.System.SkipFrame
 		SystemWrap.ScreenToCanvas = ParallelRenderer.System.ScreenToCanvas
 		SystemWrap.SetResolution = ParallelRenderer.System.SetResolution
 	else

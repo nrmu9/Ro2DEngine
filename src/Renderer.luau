@@ -249,6 +249,15 @@ function Renderer.System.ScreenToCanvas(screenX: number, screenY: number): (numb
 	return floor((screenX - g.OffsetX) * inv), floor((screenY - g.OffsetY) * inv)
 end
 
+-- Declares this frame identical to the one on screen. See the parallel renderer,
+-- which is where this earns its keep; here the flush already uploads only what
+-- changed, so a frame that drew nothing was already nearly free. It exists on
+-- both so a scene never has to ask which renderer it is talking to.
+local skipFrame = false
+function Renderer.System.SkipFrame()
+	skipFrame = true
+end
+
 function Renderer.System.SetImmediateMode(on: boolean)
 	SkipRestore = on and true or false
 end
@@ -930,6 +939,11 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 	UI.Flush()
 	if not Grid.IsReady then
 		wasReady = false
+		skipFrame = false
+		return
+	end
+	if skipFrame then
+		skipFrame = false
 		return
 	end
 
