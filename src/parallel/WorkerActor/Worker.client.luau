@@ -90,7 +90,20 @@ RunService.RenderStepped:ConnectParallel(function()
 	local ok, err = pcall(image.WritePixelsBuffer, image, Vector2.zero, imgSize, buf)
 	if not ok and not writeWarned then
 		writeWarned = true
-		warn("[Ro2D] canvas write failed, further errors suppressed: " .. tostring(err))
+		-- Once for the CANVAS, not once per worker. Every worker writes its own band
+		-- of the same image, so a failure is nearly always all eight of them failing
+		-- together on the same cause -- and eight copies of one message is one piece
+		-- of information wearing eight lines of the output. The flag below is local
+		-- and stops a worker repeating itself; the shared one stops its seven
+		-- neighbours saying the same thing.
+		local first = false
+		SharedTable.update(ST, "writeWarned", function(v)
+			first = v == nil
+			return true
+		end)
+		if first then
+			warn("[Ro2D] canvas write failed, further errors suppressed: " .. tostring(err))
+		end
 	end
 end)
 
