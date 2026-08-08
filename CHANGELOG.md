@@ -4,6 +4,25 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-08-08
+
+### Fixed
+- A gamepad is found by polling the pads rather than by waiting to be told about
+  one. `LastInputTypeChanged` fires when a device is *used*, and on some consoles
+  pushing a stick leaves nothing else to notice: until it fired there was no pad
+  and `Input.GamepadActive` stayed false, so the pad cursor never appeared and
+  nothing in a menu could be clicked. The only way out was to press a button the
+  player had no reason to press.
+
+  Each frame the pad already in hand is read directly, and the full connected
+  list four times a second; whichever pad is deflected is the one in hand. That
+  needs no event to have fired, it corrects a pick made during the join race when
+  the connected list was still empty, and it follows a player who puts one pad
+  down and picks another up.
+
+  The flag is only ever turned on this way. A mouse, a keyboard or a touch turns
+  it off, and a stick returning to centre is not one of those.
+
 ## [0.3.0] - 2026-08-04
 
 ### Added
