@@ -52,6 +52,65 @@ local function firstPad()
 	return nil
 end
 
+-- How far a stick has to be off centre to count as being used, and how often the
+-- full pad list is re-read rather than just the one in hand.
+local PAD_DEADZONE_SQ = 0.15 * 0.15
+local PAD_RESCAN = 0.25
+local rescanAt = 0
+
+local function stickOf(pad): (number, number)
+	local ok, states = pcall(function() return UserInputService:GetGamepadState(pad) end)
+	if not ok or not states then return 0, 0 end
+	for _, o in ipairs(states) do
+		if o.KeyCode == THUMB1 then return o.Position.X, o.Position.Y end
+	end
+	return 0, 0
+end
+
+-- Whether a pad is being HELD, decided by looking at the pads rather than by
+-- waiting to be told.
+--
+-- LastInputTypeChanged is how a device announces itself, and for a controller it
+-- is not enough. It fires when something is USED, and the first thing a player on
+-- a console does is push the left stick -- which on some devices leaves nothing
+-- else to notice. Until it fired there was no pad and no gamepad mode, so the
+-- cursor never appeared, no menu could be clicked, and a session that opened
+-- straight into a fight left the ship sitting still. The only way out was to press
+-- a button the player had no reason to press.
+--
+-- So the sticks are polled. Whichever pad is deflected IS the pad in hand: that
+-- needs no event to have fired, it corrects a pick made during the join race when
+-- the connected list was still empty, and it follows a player who puts one pad
+-- down and picks another up. Only ever turns the flag ON -- a mouse or a
+-- keyboard is what turns it off, and letting go of a stick is not that.
+local function pollPads(now: number)
+	if activePad then
+		local sx, sy = stickOf(activePad)
+		if sx * sx + sy * sy > PAD_DEADZONE_SQ then
+			Input.GamepadActive = true
+			return
+		end
+	end
+	-- Nothing on the pad we know about, so look at the rest -- but not every frame,
+	-- since it costs a state read per pad and the answer changes about as often as
+	-- someone swaps controllers.
+	if activePad and now < rescanAt then return end
+	rescanAt = now + PAD_RESCAN
+	local ok, pads = pcall(function() return UserInputService:GetConnectedGamepads() end)
+	if not ok or pads == nil then return end
+	for _, pad in ipairs(pads) do
+		if pad ~= activePad then
+			local sx, sy = stickOf(pad)
+			if sx * sx + sy * sy > PAD_DEADZONE_SQ then
+				activePad = pad
+				Input.GamepadActive = true
+				return
+			end
+		end
+	end
+	if not activePad and #pads > 0 then activePad = firstPad() end
+end
+
 local function readStick()
 	-- Re-picked while none is known rather than only at start-up: on a console the
 	-- pad list can still be empty when this module loads, and a stick sends
@@ -174,6 +233,7 @@ function Input.Flush()
 	local now = os.clock()
 	local dt = math.min(now - lastClock, 0.1)
 	lastClock = now
+	pollPads(now)
 	local show = Input.GamepadActive and Input.PointerVisible
 	if show and not prevShow then centerCursor() end
 	prevShow = show
