@@ -35,6 +35,8 @@ type Chunk = {
 	PrevMinX: number, PrevMaxX: number, PrevMinY: number, PrevMaxY: number,
 }
 
+local Shapes = require(script.Parent:WaitForChild("Shapes"))
+
 local Renderer = {
 	System = {},
 	Draw = {},
@@ -873,68 +875,17 @@ function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, 
 	end
 end
 
+-- Both shapes are geometry only, and the geometry lives in Shapes so the threaded
+-- backend cannot draw a different circle. All this adds is where the pixels go.
 function Draw.LineSDF(worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number)
 	if not Grid.IsReady then return end
-	local pixel = Draw.Pixel
-	local camX, camY = Camera.X, Camera.Y
-
-	local x0 = worldX0 - camX
-	local y0 = worldY0 - camY
-	local x1 = worldX1 - camX
-	local y1 = worldY1 - camY
-
-	local halfThick = thickness * 0.5
-	local dx, dy = x1 - x0, y1 - y0
-	local lenSq = dx * dx + dy * dy
-	local invLenSq = if lenSq > 0 then 1 / lenSq else 0
-
-	local minX = floor(min(x0, x1) - halfThick - 1)
-	local maxX = floor(max(x0, x1) + halfThick + 1)
-	local minY = floor(min(y0, y1) - halfThick - 1)
-	local maxY = floor(max(y0, y1) + halfThick + 1)
-	local edge = halfThick + 1
-
-	for py = minY, maxY do
-		for px = minX, maxX do
-			local t = clamp(((px - x0) * dx + (py - y0) * dy) * invLenSq, 0, 1)
-			local ex = px - (x0 + t * dx)
-			local ey = py - (y0 + t * dy)
-			local dist = sqrt(ex * ex + ey * ey)
-
-			if dist <= edge then
-				local a = 255
-				if dist > halfThick then a = floor(255 * (1 - (dist - halfThick))) end
-				if a > 5 then pixel(px + camX, py + camY, r, g, b, a) end
-			end
-		end
-	end
+	Shapes.line(Draw.Pixel, worldX0, worldY0, worldX1, worldY1, thickness, r, g, b)
 end
 
 function Draw.CircleSDF(worldX: number, worldY: number, radius: number, r: number, g: number, b: number, a: number?)
-	if not Grid.IsReady or radius <= 0 then return end
-	a = a or 255
-	local pixel = Draw.Pixel
-
-	local startX = floor(worldX - radius - 1)
-	local startY = floor(worldY - radius - 1)
-	local endX = floor(worldX + radius + 1)
-	local endY = floor(worldY + radius + 1)
-
-	for py = startY, endY do
-		local dy = py - worldY
-		local dySq = dy * dy
-		for px = startX, endX do
-			local dx = px - worldX
-			local dist = sqrt(dx * dx + dySq)
-			local coverage = radius - dist + 0.5
-			if coverage > 0 then
-				local pa = if coverage >= 1 then a else floor(a * coverage)
-				if pa > 0 then pixel(px, py, r, g, b, pa) end
-			end
-		end
-	end
+	if not Grid.IsReady then return end
+	Shapes.circle(Draw.Pixel, worldX, worldY, radius, r, g, b, a)
 end
-
 function Draw.Clear(r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady then return end
 	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216

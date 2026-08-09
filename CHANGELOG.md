@@ -4,6 +4,43 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-09
+
+### Changed
+- **One renderer, two backends.** The threaded and single-threaded renderers were
+  two objects handed straight to the caller, and `System.Init` swapped which one
+  you held. `Draw` was *replaced*, so anything that had captured it -- or captured
+  a function off it -- went on calling the backend that was no longer running.
+  `System` was worse for going only one way: a threaded Init overwrote `SetTint`,
+  `SetFade` and five others, and a single-threaded Init afterwards put none of
+  them back, so that scene drove the threaded renderer's state and its tint and
+  fade went nowhere.
+
+  `Ro2D.Draw`, `Ro2D.System` and `Ro2D.Camera` are now tables that never change
+  identity for the life of the session. Init re-points what is *inside* them, in
+  both directions, every time, with no metatable fallback to a backend -- a
+  fallback being exactly how a function belonging to the renderer that is not
+  running survives a swap. The surface is bound to the single-threaded backend at
+  require time, so it is live before Init rather than empty.
+- **Threading is on by default, on four workers.** `Parallel = false` opts out and
+  `WorkerCount` sets the number; a caller's own count is never overridden. It was
+  off unless a caller asked, which meant the faster path was the one you had to
+  know about.
+
+### Added
+- `Draw.Pixel`, `Draw.LineSDF` and `Draw.CircleSDF` on the threaded backend. All
+  three are in the published API and the single-threaded renderer has always had
+  them; the threaded one simply did not, so they were nil for anyone running
+  threaded -- which, now that threading is the default, is everyone.
+
+  The geometry moved to `Shapes`, shared by both, so a circle is the same circle
+  either way. Only the destination differs: single-threaded it writes pixels
+  straight into a chunk, threaded it fills a batched point run, so a distance
+  field travels as one command rather than one per pixel.
+
+  The suite compares the two surfaces call for call, which is how the gap was
+  found in the first place, so the pair cannot drift apart again.
+
 ## [0.4.0] - 2026-08-09
 
 ### Added
@@ -240,6 +277,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.5.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.4.0
 [0.3.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.3.1
 [0.3.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.3.0

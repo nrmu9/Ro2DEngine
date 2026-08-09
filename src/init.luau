@@ -194,6 +194,11 @@ local drawSprite = Renderer.Draw.Sprite
 
 local Ro2D
 local ParallelRenderer, activeIsParallel = nil, false
+-- How many render workers a caller gets without asking for a number. Four is the
+-- floor worth having: it is what a modest phone can keep busy, and the band split
+-- costs a little per worker, so more is a choice a scene makes rather than a
+-- default it inherits.
+local DEFAULT_WORKERS = 4
 local inputLocked = false
 local function rawMousePos()
 	local sx, sy = mouse.X, mouse.Y
@@ -241,14 +246,12 @@ local function applyIsolate2D()
 	end)
 end
 
-local SystemWrap = setmetatable({}, { __index = Renderer.System })
-function SystemWrap.SetFade() end
 
--- The overlay is owned here rather than by a renderer. Each renderer keeps its
--- own copy, and a scene that switches between them (parallel menus, a serial
--- fight) would otherwise leave one of them holding nothing -- which is how a
--- debug overlay registered once at start-up came to vanish the moment a fight
--- began. Kept at this level and re-applied on every Init, it survives the swap.
+-- The overlay is owned here rather than by a renderer. Each backend keeps its own
+-- copy, and a scene that switches between them (parallel menus, a serial fight)
+-- would otherwise leave one of them holding nothing -- which is how a debug
+-- overlay registered once at start-up came to vanish the moment a fight began.
+-- Kept at this level and re-applied on every Init, it survives the swap.
 local overlayFn = nil
 local function applyOverlay()
 	if activeIsParallel and ParallelRenderer then
@@ -257,40 +260,86 @@ local function applyOverlay()
 		Renderer.System.SetOverlay(overlayFn)
 	end
 end
-function SystemWrap.SetOverlay(fn)
+-- Held as locals as well as fields. `bindBackend` empties the table before it
+-- fills it, and this table IS the one the caller holds, so reading these back off
+-- it mid-bind would read what the clear had just removed.
+local function systemSetOverlay(fn)
 	overlayFn = fn
 	applyOverlay()
 end
+local function noFade() end
+local systemInit
 
-function SystemWrap.Init(canvasFrame, config)
+-- ONE renderer with two backends behind it.
+--
+-- They used to be two objects handed straight to the caller. `Ro2D.Draw` was
+-- REPLACED on Init, so anything holding it from before -- or holding a function
+-- taken off it -- went on talking to the backend that was no longer running. The
+-- System swap was worse, because it only went one way: a parallel Init
+-- overwrote SetTint, SetFade and five others, and a serial Init afterwards put
+-- none of them back, so the serial scene drove the parallel renderer's state and
+-- its tint and fade went nowhere.
+--
+-- The tables the caller holds now never change identity. Init re-points what is
+-- inside them, in both directions, every time.
+-- No __index fallback to a backend on either of these. Binding is TOTAL -- every
+-- call the caller can make is written in by `bindBackend` -- because a fallback
+-- is exactly how a function belonging to the renderer that is NOT running
+-- survives a swap and quietly keeps being called.
+local DRAW, SYSTEM = {}, {}
+-- Both backends read the SAME camera table, so `Ro2D.Camera` is one object for
+-- the life of the session. Assigned rather than copied: the serial renderer bound
+-- its camera to an upvalue at load, so the table has to be the one it already
+-- has, and the parallel one reads its own field per call and can be pointed here.
+local CAMERA = Renderer.Camera
+
+local function bindBackend(be)
+	table.clear(DRAW)
+	for k, v in pairs(be.Draw) do DRAW[k] = v end
+	-- Everything the backend offers, then the three this module owns whichever
+	-- backend is running. SetFade is a no-op on a renderer that has none, rather
+	-- than a missing function, so a caller never has to ask which it is talking to.
+	table.clear(SYSTEM)
+	for k, v in pairs(be.System) do SYSTEM[k] = v end
+	SYSTEM.Init = systemInit
+	SYSTEM.SetOverlay = systemSetOverlay
+	if SYSTEM.SetFade == nil then SYSTEM.SetFade = noFade end
+	if Ro2D then Ro2D.Compute = be.Compute or ComputeStub end
+end
+
+function systemInit(canvasFrame, config)
 	if config and config.Isolate2D then applyIsolate2D() end
-	if config and config.Parallel then
+	-- Threaded unless the caller says otherwise, on four workers unless the caller
+	-- says how many. It is the faster path on every device that has the cores for
+	-- it, so it is what you get without asking; `Parallel = false` is the way out,
+	-- for a device that cannot or a bug that needs the simpler renderer to compare
+	-- against.
+	local wantParallel = not (config and config.Parallel == false)
+	if wantParallel then
 		ParallelRenderer = ParallelRenderer
 			or require(script:WaitForChild("parallel"):WaitForChild("ParallelRenderer"))
-		ParallelRenderer.System.Init(canvasFrame, config)
+		ParallelRenderer.Camera = CAMERA
+		local cfg = config or {}
+		if cfg.WorkerCount == nil then
+			cfg = table.clone(cfg)
+			cfg.WorkerCount = DEFAULT_WORKERS
+		end
+		ParallelRenderer.System.Init(canvasFrame, cfg)
 		activeIsParallel = true
-		Ro2D.Draw = ParallelRenderer.Draw
-		Ro2D.Camera = ParallelRenderer.Camera
-		Ro2D.Compute = ParallelRenderer.Compute
-		SystemWrap.SetTint = ParallelRenderer.System.SetTint
-		SystemWrap.SetFade = ParallelRenderer.System.SetFade
-		SystemWrap.SetBackground = ParallelRenderer.System.SetBackground
-		SystemWrap.SetImmediateMode = ParallelRenderer.System.SetImmediateMode
-		SystemWrap.SkipFrame = ParallelRenderer.System.SkipFrame
-		SystemWrap.ScreenToCanvas = ParallelRenderer.System.ScreenToCanvas
-		SystemWrap.SetResolution = ParallelRenderer.System.SetResolution
+		bindBackend(ParallelRenderer)
 	else
 		activeIsParallel = false
 		Renderer.System.Init(canvasFrame, config)
+		bindBackend(Renderer)
 	end
-	-- Last, so it lands on whichever renderer this Init just made current.
+	-- Last, so it lands on whichever backend this Init just made current.
 	applyOverlay()
 end
 
 Ro2D = {
-	System = SystemWrap,
-	Draw = Renderer.Draw,
-	Camera = Renderer.Camera,
+	System = SYSTEM,
+	Draw = DRAW,
+	Camera = CAMERA,
 	Assets = Assets,
 	Physics = Physics,
 	UI = UI,
@@ -325,6 +374,12 @@ Ro2D = {
 		SetPointerVisible = function(v) Input.PointerVisible = v ~= false end,
 	},
 }
+
+-- The surface is live before Init, bound to the single-threaded backend. Without
+-- this a caller that touched `Draw` or `System` between requiring the engine and
+-- initialising it would find an empty table rather than a renderer that has not
+-- started yet, and "attempt to call a nil value" is a worse way to learn that.
+bindBackend(Renderer)
 
 local proxy = setmetatable({}, {
 	__index = function(_, key)

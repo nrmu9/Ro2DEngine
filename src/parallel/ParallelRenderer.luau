@@ -6,6 +6,9 @@ local SharedTableRegistry = game:GetService("SharedTableRegistry")
 
 local engine = script.Parent.Parent
 local CommandBuffer = require(engine:WaitForChild("CommandBuffer"))
+-- Shared with the single-threaded backend, so the two cannot draw a different
+-- circle. See Draw.CircleSDF below.
+local Shapes = require(engine:WaitForChild("Shapes"))
 local FontCodec = require(script.Parent:WaitForChild("FontCodec"))
 local ComputePool = require(script.Parent:WaitForChild("ComputePool"))
 local DrawBounds = require(script.Parent:WaitForChild("DrawBounds"))
@@ -248,6 +251,37 @@ function PR.Draw.SpriteEx(x, y, sprite, opts)
 			bd.cb:spriteEx(x0, y0, id, scale, rot, tr, tg, tb, al, opts.FlipX, opts.FlipY)
 		end
 	end
+end
+-- The three the threaded backend did not have.
+--
+-- `Draw.Pixel`, `Draw.LineSDF` and `Draw.CircleSDF` are in the engine's published
+-- API and the single-threaded renderer has always had them; this one simply did
+-- not, so they were nil for anyone running threaded -- which, now that threading
+-- is the default, is everyone. The suite compares the two surfaces call for call
+-- so the pair cannot drift apart again.
+--
+-- The geometry is Shapes', shared with the other backend, so a circle is the same
+-- circle either way. What differs is where the pixels go: a distance field is
+-- thousands of single pixels, which is precisely the shape of thing the points
+-- batch exists for, so the whole figure travels as one command instead of one per
+-- pixel.
+function PR.Draw.Pixel(x, y, r, g, b, a)
+	if PR.IsReady then cb:rect(x - PR.Camera.X, y - PR.Camera.Y, 1, 1, r, g, b, a) end
+end
+local function plotPoint(x, y, r, g, b, a)
+	cb:point(x - PR.Camera.X, y - PR.Camera.Y, 1, r, g, b, a or 255)
+end
+function PR.Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)
+	if not PR.IsReady then return end
+	cb:beginPoints()
+	Shapes.line(plotPoint, x0, y0, x1, y1, thickness, r, g, b)
+	cb:endPoints()
+end
+function PR.Draw.CircleSDF(x, y, radius, r, g, b, a)
+	if not PR.IsReady then return end
+	cb:beginPoints()
+	Shapes.circle(plotPoint, x, y, radius, r, g, b, a)
+	cb:endPoints()
 end
 function PR.Draw.MeasureText(text, font, scale)
 	if not font then return 0 end
