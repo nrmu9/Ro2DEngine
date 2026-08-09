@@ -772,9 +772,12 @@ end
 function Draw.BeginPoints() end
 function Draw.EndPoints() end
 function Draw.Point(worldX: number, worldY: number, size: number, r: number, g: number, b: number, a: number?)
+	-- Offset by the side that will actually be drawn. See the parallel renderer:
+	-- backing off half of the UNFLOORED size put every particle a fraction of a
+	-- pixel left and up of centre, constantly and in one direction.
 	local s = floor(size)
 	if s > 0 then
-		Draw.Rect(worldX - size * 0.5, worldY - size * 0.5, s, s, r, g, b, a)
+		Draw.Rect(worldX - s * 0.5, worldY - s * 0.5, s, s, r, g, b, a)
 	end
 end
 

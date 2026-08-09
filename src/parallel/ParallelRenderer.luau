@@ -182,8 +182,15 @@ function PR.Draw.Point(x, y, size, r, g, b, a)
 	local s = floor(size)
 	if s <= 0 then return end
 	if s > 255 then s = 255 end
-	local x0 = x - size * 0.5 - PR.Camera.X
-	local y0 = y - size * 0.5 - PR.Camera.Y
+	-- Offset by the side that will actually be DRAWN, not by the one asked for.
+	--
+	-- The square is `s` pixels wide because the extent is floored, but the corner
+	-- was being placed half of the unfloored `size` back -- so a 2.6-wide particle
+	-- drew two pixels centred a third of a pixel left and up of where it was meant
+	-- to be. Small, constant, and in one direction, which is exactly how it read: a
+	-- trail sitting slightly off the back of the bullet rather than behind it.
+	local x0 = x - s * 0.5 - PR.Camera.X
+	local y0 = y - s * 0.5 - PR.Camera.Y
 	a = a or 255
 	local one = only()
 	if one then
