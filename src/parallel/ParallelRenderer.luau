@@ -99,6 +99,25 @@ end
 function PR.Draw.RectRotated(x, y, w, h, angle, r, g, b, a)
 	if PR.IsReady then cb:rectRot(x - PR.Camera.X, y - PR.Camera.Y, w, h, angle, r, g, b, a) end
 end
+-- Many small squares as one command. Bracket the run with Begin/End and call
+-- Point for each; see CommandBuffer.beginPoints for why a particle field is worth
+-- a command of its own.
+--
+-- `size` is the side in pixels and is floored, which is exactly what a Rect of a
+-- fractional size already covered.
+function PR.Draw.BeginPoints()
+	if PR.IsReady then cb:beginPoints() end
+end
+function PR.Draw.Point(x, y, size, r, g, b, a)
+	if not PR.IsReady then return end
+	local s = floor(size)
+	if s <= 0 then return end
+	cb:point(x - size * 0.5 - PR.Camera.X, y - size * 0.5 - PR.Camera.Y,
+		s > 255 and 255 or s, r, g, b, a or 255)
+end
+function PR.Draw.EndPoints()
+	if PR.IsReady then cb:endPoints() end
+end
 function PR.Draw.Sprite(x, y, sprite, flipX, flipY)
 	if PR.IsReady and sprite then cb:sprite(x - PR.Camera.X, y - PR.Camera.Y, spriteIdOf(sprite), flipX, flipY) end
 end

@@ -127,6 +127,13 @@ export type Ro2DAPI = {
 		SpriteEx: (worldX: number, worldY: number, sprite: Sprite, opts: SpriteDrawOptions?) -> (),
 		Rect: (worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?) -> (),
 		RectRotated: (worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?) -> (),
+		-- Many small squares as one command. Bracket a run with BeginPoints and
+		-- EndPoints and call Point for each; on the parallel renderer that is one
+		-- command for the whole field instead of one per square, which is what keeps
+		-- a large particle system inside a worker's time budget.
+		BeginPoints: () -> (),
+		Point: (worldX: number, worldY: number, size: number, r: number, g: number, b: number, a: number?) -> (),
+		EndPoints: () -> (),
 		Text: (worldX: number, worldY: number, text: string, font: Font, opts: TextDrawOptions?) -> (),
 		MeasureText: (text: string, font: Font, scale: number?) -> number,
 		LineSDF: (worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number) -> (),

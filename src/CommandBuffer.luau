@@ -17,6 +17,8 @@ local OP = {
 	TEXT = 6,
 	TINT = 7,
 	CLIP = 8,
+	-- Many small axis-aligned squares in ONE command. See `beginPoints`.
+	POINTS = 9,
 }
 CommandBuffer.OP = OP
 
@@ -33,6 +35,8 @@ end
 
 function CommandBuffer:reset()
 	self.cur = 0
+	self.ptsAt = nil
+	self.ptsN = 0
 end
 
 function CommandBuffer:_need(extra: number)
@@ -79,6 +83,58 @@ function CommandBuffer:rect(x, y, w, h, r, g, b, a)
 	wf32(buf, c + 1, x); wf32(buf, c + 5, y); wf32(buf, c + 9, w); wf32(buf, c + 13, h)
 	wu8(buf, c + 17, r); wu8(buf, c + 18, g); wu8(buf, c + 19, b); wu8(buf, c + 20, a or 255)
 	self.cur = c + 21
+end
+
+-- A run of small axis-aligned squares under ONE op.
+--
+-- A particle field is thousands of two-pixel squares, and as individual RECTs it
+-- is the most expensive thing in a frame -- not because of the pixels, which are
+-- trivial, but because of everything around them. The stream is serialised to a
+-- string and every worker copies and walks the whole of it, so one particle costs
+-- twenty-one bytes and one dispatch PER WORKER. Eight workers and two thousand
+-- particles is sixteen thousand method calls and a hundred thousand buffer reads
+-- before a single pixel is touched, every frame -- which is how a heavy frame
+-- exhausts a parallel resumption's time budget.
+--
+-- Batched, the same field is one op, thirteen bytes each, and a tight loop inside
+-- the rasteriser with its buffer, width and scissor hoisted once for the run.
+--
+-- `size` is the side in whole pixels, which is what the per-rect path drew
+-- anyway: it floors the extent, so a 2.6-wide square covered two pixels. The
+-- position stays f32 because the camera offset is fractional and rounding here
+-- would make a two-pixel particle jitter by a pixel as the camera moves.
+function CommandBuffer:beginPoints()
+	self:_need(3)
+	local c = self.cur
+	wu8(self.buf, c, OP.POINTS)
+	-- Patched by `endPoints`. Kept as an offset rather than a pointer because
+	-- `_need` may reallocate the buffer under us between here and there.
+	wu16(self.buf, c + 1, 0)
+	self.ptsAt, self.ptsN = c, 0
+	self.cur = c + 3
+end
+
+function CommandBuffer:point(x, y, size, r, g, b, a)
+	if self.ptsAt == nil then return end
+	-- The count is a u16. A run that reaches the ceiling is closed and a new one
+	-- opened, so a caller never has to know there is a ceiling.
+	if self.ptsN >= 65535 then
+		self:endPoints()
+		self:beginPoints()
+	end
+	self:_need(13)
+	local buf, c = self.buf, self.cur
+	wf32(buf, c, x); wf32(buf, c + 4, y)
+	wu8(buf, c + 8, size)
+	wu8(buf, c + 9, r); wu8(buf, c + 10, g); wu8(buf, c + 11, b); wu8(buf, c + 12, a)
+	self.cur = c + 13
+	self.ptsN += 1
+end
+
+function CommandBuffer:endPoints()
+	if self.ptsAt == nil then return end
+	wu16(self.buf, self.ptsAt + 1, self.ptsN)
+	self.ptsAt, self.ptsN = nil, 0
 end
 
 function CommandBuffer:rectRot(cx, cy, w, h, angle, r, g, b, a)
@@ -136,40 +192,53 @@ end
 function CommandBuffer.decode(bytes: string, h)
 	local buf = buffer.fromstring(bytes)
 	local len = buffer.len(buf)
+	-- Bound once for the whole stream rather than looked up per command. Every
+	-- worker walks every command of every frame, so one hash lookup per command is
+	-- one hash lookup per command per worker per frame.
+	local fClear, fTint, fClip = h.clear, h.tint, h.setClip
+	local fRect, fRectRot, fPoints = h.rect, h.rectRot, h.points
+	local fSprite, fSpriteEx, fText = h.sprite, h.spriteEx, h.text
 	local c = 0
 	while c < len do
 		local op = ru8(buf, c)
 		if op == OP.CLEAR then
-			h:clear(ru8(buf, c + 1), ru8(buf, c + 2), ru8(buf, c + 3), ru8(buf, c + 4))
+			fClear(h, ru8(buf, c + 1), ru8(buf, c + 2), ru8(buf, c + 3), ru8(buf, c + 4))
 			c += 5
 		elseif op == OP.TINT then
-			h:tint(ru8(buf, c + 1), ru8(buf, c + 2), ru8(buf, c + 3), ru8(buf, c + 4))
+			fTint(h, ru8(buf, c + 1), ru8(buf, c + 2), ru8(buf, c + 3), ru8(buf, c + 4))
 			c += 5
 		elseif op == OP.CLIP then
-			h:setClip(rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13))
+			fClip(h, rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13))
 			c += 17
 		elseif op == OP.RECT then
-			h:rect(rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13),
+			fRect(h, rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13),
 				ru8(buf, c + 17), ru8(buf, c + 18), ru8(buf, c + 19), ru8(buf, c + 20))
 			c += 21
 		elseif op == OP.RECT_ROT then
-			h:rectRot(rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13),
+			fRectRot(h, rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13),
 				rf32(buf, c + 17), ru8(buf, c + 21), ru8(buf, c + 22), ru8(buf, c + 23), ru8(buf, c + 24))
 			c += 25
 		elseif op == OP.SPRITE then
 			local f = ru8(buf, c + 11)
-			h:sprite(rf32(buf, c + 1), rf32(buf, c + 5), ru16(buf, c + 9), f % 2 == 1, f >= 2)
+			fSprite(h, rf32(buf, c + 1), rf32(buf, c + 5), ru16(buf, c + 9), f % 2 == 1, f >= 2)
 			c += 12
 		elseif op == OP.SPRITE_EX then
 			local f = ru8(buf, c + 23)
-			h:spriteEx(rf32(buf, c + 1), rf32(buf, c + 5), ru16(buf, c + 9),
+			fSpriteEx(h, rf32(buf, c + 1), rf32(buf, c + 5), ru16(buf, c + 9),
 				rf32(buf, c + 11), rf32(buf, c + 15),
 				ru8(buf, c + 19), ru8(buf, c + 20), ru8(buf, c + 21), ru8(buf, c + 22),
 				f % 2 == 1, f >= 2)
 			c += 24
+		elseif op == OP.POINTS then
+			-- Handed the buffer and a range rather than unpacked here: the whole point
+			-- of the batch is that the rasteriser walks it once with its state hoisted,
+			-- instead of this loop dispatching per square.
+			local n = ru16(buf, c + 1)
+			fPoints(h, buf, c + 3, n)
+			c += 3 + n * 13
 		elseif op == OP.TEXT then
 			local n = ru16(buf, c + 19)
-			h:text(rf32(buf, c + 1), rf32(buf, c + 5), buffer.readstring(buf, c + 21, n),
+			fText(h, rf32(buf, c + 1), rf32(buf, c + 5), buffer.readstring(buf, c + 21, n),
 				ru16(buf, c + 9), rf32(buf, c + 11),
 				ru8(buf, c + 15), ru8(buf, c + 16), ru8(buf, c + 17), ru8(buf, c + 18))
 			c += 21 + n

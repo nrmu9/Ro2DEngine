@@ -3,6 +3,7 @@
 
 local buffer = buffer
 local readu32, writeu32 = buffer.readu32, buffer.writeu32
+local readu8, readf32 = buffer.readu8, buffer.readf32
 local floor, abs, min, max = math.floor, math.abs, math.min, math.max
 local ceil = math.ceil
 local cos, sin = math.cos, math.sin
@@ -115,6 +116,67 @@ function Rasterizer:rect(x, y, w, h, r, g, b, a)
 				off += 4
 			end
 		end
+	end
+end
+
+-- A packed run of small axis-aligned squares, walked in one pass.
+--
+-- Same pixels a RECT each would have produced. What it saves is everything
+-- around them: one op instead of thousands, one dispatch instead of thousands,
+-- and the buffer, the band width and the scissor read once for the whole run
+-- rather than once per square. See CommandBuffer.beginPoints for why that is the
+-- expensive part of a particle field rather than the filling.
+--
+-- Records are 13 bytes: x and y as f32, then side, r, g, b and a as u8.
+function Rasterizer:points(src: buffer, off: number, n: number)
+	local bw, buf = self.w, self.buf
+	local ox, oy = self.ox, self.oy
+	local cx0, cy0, cx1, cy1 = self.cx0, self.cy0, self.cx1, self.cy1
+	for _ = 1, n do
+		local s = readu8(src, off + 8)
+		if s > 0 then
+			local x0 = floor(readf32(src, off) - ox)
+			local y0 = floor(readf32(src, off + 4) - oy)
+			local x1, y1 = x0 + s - 1, y0 + s - 1
+			-- Almost every square in a field is outside any one worker's band, so
+			-- this rejection is the hot path and is kept to four comparisons.
+			if x1 >= cx0 and y1 >= cy0 and x0 <= cx1 and y0 <= cy1 then
+				if x0 < cx0 then x0 = cx0 end
+				if y0 < cy0 then y0 = cy0 end
+				if x1 > cx1 then x1 = cx1 end
+				if y1 > cy1 then y1 = cy1 end
+				local a = readu8(src, off + 12)
+				local r = readu8(src, off + 9)
+				local g = readu8(src, off + 10)
+				local b = readu8(src, off + 11)
+				if a >= 255 then
+					local packed = r + g * 256 + b * 65536 + 0xFF000000
+					for py = y0, y1 do
+						local o = (py * bw + x0) * 4
+						for _ = x0, x1 do
+							writeu32(buf, o, packed)
+							o += 4
+						end
+					end
+				else
+					local ia = 255 - a
+					local ar, ag, ab = r * a, g * a, b * a
+					for py = y0, y1 do
+						local o = (py * bw + x0) * 4
+						for _ = x0, x1 do
+							local dst = readu32(buf, o)
+							writeu32(buf, o,
+								(ar + (dst % 256) * ia) // 255
+								+ ((ag + (dst // 256 % 256) * ia) // 255) * 256
+								+ ((ab + (dst // 65536 % 256) * ia) // 255) * 65536
+								+ 0xFF000000)
+							o += 4
+						end
+					end
+				end
+			end
+		end
+		off += 13
 	end
 end
 

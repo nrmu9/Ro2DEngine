@@ -762,6 +762,22 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 	end
 end
 
+-- The batched-points API, which on the serial renderer is simply Rect.
+--
+-- It exists for the parallel one, where a particle field as thousands of separate
+-- commands is the most expensive thing in a frame -- see CommandBuffer.beginPoints.
+-- Here there is no stream to serialise and no worker to copy it, so a point IS a
+-- one-pixel-or-so rect and the brackets have nothing to do. Present all the same,
+-- so a caller never has to ask which renderer it is talking to.
+function Draw.BeginPoints() end
+function Draw.EndPoints() end
+function Draw.Point(worldX: number, worldY: number, size: number, r: number, g: number, b: number, a: number?)
+	local s = floor(size)
+	if s > 0 then
+		Draw.Rect(worldX - size * 0.5, worldY - size * 0.5, s, s, r, g, b, a)
+	end
+end
+
 function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady or w <= 0 or h <= 0 then return end
 	local cx = worldX - Camera.X
