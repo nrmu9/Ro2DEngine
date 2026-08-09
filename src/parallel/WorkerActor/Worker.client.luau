@@ -20,6 +20,10 @@ local function A(name)
 	end
 	return v
 end
+-- This worker's own stream key. Each band is handed only the commands that touch
+-- it, rather than every worker walking the whole scene -- see ParallelRenderer.
+local BAND_I = A("BandIndex")
+local CMD_KEY = "c" .. BAND_I
 local BAND_X, BAND_Y = A("BandX"), A("BandY")
 local BAND_W, BAND_H = A("BandW"), A("BandH")
 local SCALE = A("DisplayScale")
@@ -76,7 +80,7 @@ RunService.RenderStepped:ConnectParallel(function()
 	if fid == nil or fid == lastFrame then
 		return
 	end
-	local bytes = ST.commands
+	local bytes = ST[CMD_KEY]
 	if bytes == nil then
 		return
 	end
