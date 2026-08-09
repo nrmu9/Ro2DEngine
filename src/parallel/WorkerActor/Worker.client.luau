@@ -75,7 +75,39 @@ local lastFrame = -1
 -- time and never again: fifty thousand copies of one message is not a log.
 local writeWarned = false
 
-RunService.RenderStepped:ConnectParallel(function()
+-- A worker stops itself the moment it leaves the tree.
+--
+-- Changing the resolution rebuilds the bands, which destroys every worker actor
+-- and makes new ones -- and a scene change does exactly that, since the menus and
+-- the fight render at different sizes. Relying on Destroy to sever this
+-- connection is not enough: a callback already scheduled for the frame still
+-- runs, and by the time it reaches `task.synchronize` the script it belongs to is
+-- no longer a descendant of an Actor, which is an error rather than a quiet
+-- no-op. Every scene change threw one per worker.
+--
+-- Two ways in, because they answer different endings: Destroying is the actor
+-- being taken apart, AncestryChanged is it being lifted out of the DataModel
+-- without being destroyed.
+local alive = true
+local frameConn
+local function stop()
+	if not alive then return end
+	alive = false
+	if frameConn then
+		frameConn:Disconnect()
+		frameConn = nil
+	end
+end
+actor.Destroying:Connect(stop)
+actor.AncestryChanged:Connect(function(_, parent)
+	if parent == nil then stop() end
+end)
+
+frameConn = RunService.RenderStepped:ConnectParallel(function()
+	-- Checked before anything else, and before the synchronize below in particular:
+	-- the destroy that invalidates this worker happens serially, so a parallel
+	-- callback that gets this far is safe for the rest of its run.
+	if not alive then return end
 	local fid = ST.frame
 	if fid == nil or fid == lastFrame then
 		return

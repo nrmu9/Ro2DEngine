@@ -4,6 +4,18 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-08-09
+
+### Fixed
+- A render worker now stops itself when its band is taken away. Changing the
+  resolution rebuilds the bands, which destroys every worker actor and makes new
+  ones -- and since menus and gameplay commonly render at different sizes, that is
+  every scene change. Relying on `Destroy` to sever the frame connection is not
+  enough: a callback already scheduled for that frame still runs, and reaches
+  `task.synchronize` with no Actor above it, which raises rather than doing
+  nothing. Each worker now disconnects on `Destroying` and on being lifted out of
+  the DataModel, and checks before it synchronizes.
+
 ## [0.5.0] - 2026-08-09
 
 ### Changed
@@ -277,6 +289,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.5.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.1
 [0.5.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.4.0
 [0.3.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.3.1
