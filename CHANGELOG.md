@@ -4,6 +4,58 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-09
+
+### Added
+- `Draw.BeginPoints()`, `Draw.Point(x, y, size, r, g, b, a?)` and `Draw.EndPoints()`
+  draw many small axis-aligned squares as one command.
+
+  A particle field is thousands of two-pixel squares, and as individual rects it
+  is the most expensive thing in a frame -- not because of the pixels, which are
+  trivial, but because of everything around them. Under the parallel renderer the
+  command stream is serialised to a string and every worker copies and walks the
+  whole of it, so one square costs twenty-one bytes and one dispatch *per
+  worker*. Batched, the same field is one command, thirteen bytes each, and a
+  tight loop inside the rasteriser with its buffer, band width and scissor
+  hoisted once for the run.
+
+  The side is stored as a whole pixel, which is what a rect of a fractional size
+  already covered; the position stays a float, because the camera offset is
+  fractional and rounding it here would make a small particle jitter by a pixel
+  as the camera moves. On the single-threaded renderer the three calls are
+  `Draw.Rect` and two no-ops, so a caller never has to ask which renderer it is
+  talking to.
+
+### Changed
+- The parallel renderer sends each command only to the bands it touches.
+
+  Every worker used to copy and walk the entire stream, so a command was decoded
+  once per worker whether or not it landed anywhere near that worker's band:
+  eight workers meant eight times the decode work for a scene and seven eighths
+  of it produced nothing. On a heavy frame that is what exhausts a resumption's
+  time budget, and it is why the resulting timeouts name a different primitive
+  each time -- the clock stops wherever it happens to be.
+
+  Each command is now bounded once, on the main thread, and written only into the
+  bands it overlaps; a batch of points is routed per point, so a band holds its
+  own particles and no others. State -- clear, tint and clip -- has no position
+  and still goes to every band, and order within a band is preserved because
+  every band is appended to in the order the calls arrive.
+
+  Measured on a frame of 1400 particles, 140 rotated blocks and 220 bullets
+  across eight bands: bytes copied per frame fell to 14% of before, and a band's
+  decode and fill to roughly 65-85%, the remainder being the pixels themselves,
+  which are the same either way.
+
+  The bounds live in `parallel/DrawBounds` rather than inline, because the
+  condition they have to meet is not obvious and is worth testing directly: a
+  bound must contain every pixel the rasteriser would paint. Too generous costs a
+  band a decode that paints nothing; too tight is a hole in the picture along a
+  band seam, appearing at some angles and some strings and not others.
+- `CommandBuffer.decode` binds the handler's methods once per stream instead of
+  looking each up per command. Every worker walks every command of every frame,
+  so one hash lookup per command is one per command per worker per frame.
+
 ## [0.3.1] - 2026-08-08
 
 ### Fixed
@@ -188,6 +240,8 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.4.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.4.0
+[0.3.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.3.1
 [0.3.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.3.0
 [0.2.3]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.3
 [0.2.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.2.2
