@@ -137,15 +137,22 @@ local function ensureCursor()
 	cursorGui.IgnoreGuiInset = true
 	cursorGui.ResetOnSpawn = false
 	cursorGui.Enabled = false
+	-- Named, like everything else the engine puts in the tree. An unnamed instance
+	-- takes its class as its name, so this was a "Frame" containing a "UICorner"
+	-- and a "UIStroke" -- three names anything at all could also have, which is a
+	-- poor thing for a consumer auditing its own PlayerGui to have to accept.
 	cursorDot = Instance.new("Frame")
+	cursorDot.Name = "Ro2DCursorDot"
 	cursorDot.Size = UDim2.fromOffset(16, 16)
 	cursorDot.AnchorPoint = Vector2.new(0.5, 0.5)
 	cursorDot.BackgroundColor3 = Color3.new(1, 1, 1)
 	cursorDot.BorderSizePixel = 0
 	local corner = Instance.new("UICorner")
+	corner.Name = "Ro2DCursorCorner"
 	corner.CornerRadius = UDim.new(1, 0)
 	corner.Parent = cursorDot
 	local stroke = Instance.new("UIStroke")
+	stroke.Name = "Ro2DCursorStroke"
 	stroke.Thickness = 2
 	stroke.Color = Color3.new(0, 0, 0)
 	stroke.Parent = cursorDot
