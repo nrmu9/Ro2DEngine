@@ -4,6 +4,38 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-08-12
+
+### Fixed
+- `Draw.Pixel`, `Draw.LineSDF` and `Draw.CircleSDF` work on the threaded backend.
+  All three were added in 0.5.0 and none has ever run: they were written against a
+  single shared command buffer named `cb`, which is what this renderer had until
+  each band was given its own one commit earlier, so each reached for a variable
+  that no longer existed.
+
+  Nothing raised, because nothing called them. Reading a global that was never
+  declared gives nil rather than erroring, so the failure sat at the index waiting
+  for a caller, and threading is the default, so the first caller to want a circle
+  would have met it whichever renderer they thought they were using.
+
+  Routed now, like every other primitive: a pixel through `Draw.Rect`, so it cannot
+  land in a different band from the rect covering the same coordinate, and the two
+  distance fields through the batched point run, so a figure still travels as one
+  command rather than one per pixel.
+
+- The suite calls both backends instead of reading them, which is why the gap
+  survived two releases: the parity check compared function *names* found by regex,
+  found all three present in both files, and never invoked one. One of its
+  assertions was that the text `cb:beginPoints()` appeared in the source.
+
+  Both renderers are now stood up outside Roblox and every published call is
+  invoked on each, with a call that has no test arguments written for it counting
+  as a failure. What the batching claims is read off the decoded stream: a circle
+  arrives as one command carrying exactly as many squares as `Shapes` plotted.
+
+  A `luau-lsp analyze` gate came with it. An unknown global is a lint finding, not
+  a compile error, so the compile sweep could not have caught this.
+
 ## [0.5.1] - 2026-08-09
 
 ### Fixed
@@ -289,6 +321,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.5.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.2
 [0.5.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.1
 [0.5.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.4.0
