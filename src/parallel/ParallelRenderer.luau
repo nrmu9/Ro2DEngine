@@ -252,36 +252,48 @@ function PR.Draw.SpriteEx(x, y, sprite, opts)
 		end
 	end
 end
--- The three the threaded backend did not have.
+-- The geometry is Shapes', shared with the serial backend, so a circle is the same
+-- circle either way. Only the destination differs: a distance field is thousands of
+-- single pixels, so the whole figure travels as one batched command.
 --
--- `Draw.Pixel`, `Draw.LineSDF` and `Draw.CircleSDF` are in the engine's published
--- API and the single-threaded renderer has always had them; this one simply did
--- not, so they were nil for anyone running threaded -- which, now that threading
--- is the default, is everyone. The suite compares the two surfaces call for call
--- so the pair cannot drift apart again.
---
--- The geometry is Shapes', shared with the other backend, so a circle is the same
--- circle either way. What differs is where the pixels go: a distance field is
--- thousands of single pixels, which is precisely the shape of thing the points
--- batch exists for, so the whole figure travels as one command instead of one per
--- pixel.
+-- Delegated to Rect rather than given its own band walk, so a pixel cannot land in
+-- a different band from the rect covering the same coordinate.
 function PR.Draw.Pixel(x, y, r, g, b, a)
-	if PR.IsReady then cb:rect(x - PR.Camera.X, y - PR.Camera.Y, 1, 1, r, g, b, a) end
+	if PR.IsReady then PR.Draw.Rect(x, y, 1, 1, r, g, b, a) end
 end
+-- TOP-LEFT anchored, which is why this is not Draw.Point: Shapes hands out the
+-- pixel it wants filled, not the centre of a square, and backing off half a pixel
+-- would move a whole figure up and left by one.
 local function plotPoint(x, y, r, g, b, a)
-	cb:point(x - PR.Camera.X, y - PR.Camera.Y, 1, r, g, b, a or 255)
+	local x0 = x - PR.Camera.X
+	local y0 = y - PR.Camera.Y
+	a = a or 255
+	local one = only()
+	if one then
+		one:point(x0, y0, 1, r, g, b, a)
+		return
+	end
+	local ax, ay, bx, by = DrawBounds.point(x0, y0, 1)
+	for i = 1, nBands do
+		local bd = bands[i]
+		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+			bd.cb:point(x0, y0, 1, r, g, b, a)
+		end
+	end
 end
+-- Through the public Begin/EndPoints because they bracket a run on EVERY band: a
+-- band holding none of the figure still needs its run closed.
 function PR.Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)
 	if not PR.IsReady then return end
-	cb:beginPoints()
+	PR.Draw.BeginPoints()
 	Shapes.line(plotPoint, x0, y0, x1, y1, thickness, r, g, b)
-	cb:endPoints()
+	PR.Draw.EndPoints()
 end
 function PR.Draw.CircleSDF(x, y, radius, r, g, b, a)
 	if not PR.IsReady then return end
-	cb:beginPoints()
+	PR.Draw.BeginPoints()
 	Shapes.circle(plotPoint, x, y, radius, r, g, b, a)
-	cb:endPoints()
+	PR.Draw.EndPoints()
 end
 function PR.Draw.MeasureText(text, font, scale)
 	if not font then return 0 end
