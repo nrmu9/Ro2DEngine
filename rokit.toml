@@ -5,3 +5,8 @@
 
 [tools]
 rojo = "rojo-rbx/rojo@7.7.0"
+# Runs the game's suites. Pinned to the version CI installs: the compile sweep
+# asserts where that exact Luau runs out of registers.
+lune = "lune-org/lune@0.10.5"
+# Read by the lint suite. An unknown global is a lint finding, not a compile error.
+luau-lsp = "JohnnyMorganz/luau-lsp@1.58.0"
