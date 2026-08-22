@@ -35,6 +35,11 @@ end
 
 function UI.Init(parentLayer: Frame, screenW: number, screenH: number, displayScale: number, baseOffsetX: number, baseOffsetY: number)
 	UI.IsReady = false
+	-- The surfaces, which destroying the layer that shows them does not release.
+	for i = 1, #UI.ChunkList do
+		local img = UI.ChunkList[i].Image
+		if img then img:Destroy() end
+	end
 	if UI.LayerFrame then UI.LayerFrame:Destroy() end
 
 	UI.Width = screenW
@@ -73,11 +78,18 @@ function UI.Init(parentLayer: Frame, screenW: number, screenH: number, displaySc
 			frame.ResampleMode = Enum.ResamplerMode.Pixelated
 			frame.Parent = layer
 
-			local image = AssetService:CreateEditableImage({ Size = Vector2_new(chunkW, chunkH) })
-			frame.ImageContent = Content.fromObject(image)
+			local imgOk, image = pcall(AssetService.CreateEditableImage, AssetService,
+				{ Size = Vector2_new(chunkW, chunkH) })
+			if not imgOk or image == nil then
+				image = nil
+			else
+				frame.ImageContent = Content.fromObject(image)
+			end
 
 			local byteSize = chunkW * chunkH * 4
+			debug.setmemorycategory("Ro2D/UI")
 			local buf = bcreate(byteSize)
+			debug.resetmemorycategory()
 
 			local chunk = {
 				Image = image,
@@ -194,7 +206,8 @@ function UI.Flush()
 			local rectH = chunk.MaxY - chunk.MinY + 1
 			local buf = chunk.Buffer
 
-			if rectW == cw and rectH == chunk.Height then
+			if not chunk.Image then
+			elseif rectW == cw and rectH == chunk.Height then
 				chunk.Image:WritePixelsBuffer(Vector2.zero, chunk.SizeVec, buf)
 			else
 				local requiredBytes = rectW * rectH * 4

@@ -48,6 +48,7 @@ local Renderer = {
 		Width = 0, Height = 0,
 		AntiAliasing = false,
 		IsReady = false,
+		MissingImages = 0,
 	},
 	Resolution = Vector2_new(0, 0),
 }
@@ -76,6 +77,12 @@ local function fillU32(buf: buffer, start: number, count: number, packed: number
 end
 
 local function clearMemory()
+	-- An EditableImage is charged against a budget the whole experience shares and
+	-- is not released by destroying the label that shows it.
+	for i = 1, #ChunkList do
+		local img = ChunkList[i].Image
+		if img then img:Destroy() end
+	end
 	for i = 1, #ChunkUIElements do
 		ChunkUIElements[i]:Destroy()
 	end
@@ -115,6 +122,7 @@ local function rebuildGrid()
 		baseOffsetX, baseOffsetY = 0, 0
 	end
 
+	Renderer.Grid.MissingImages = 0
 	Renderer.Grid.Width = targetWidth
 	Renderer.Grid.Height = targetHeight
 	Renderer.Grid.DisplayScale = displayScale
@@ -147,10 +155,21 @@ local function rebuildGrid()
 			frame.Parent = CanvasFrame
 			table.insert(ChunkUIElements, frame)
 
-			local image = AssetService:CreateEditableImage({ Size = Vector2_new(chunkW, chunkH) })
-			frame.ImageContent = Content.fromObject(image)
+			-- Answers nil when the shared budget is spent.
+			local imgOk, image = pcall(AssetService.CreateEditableImage, AssetService,
+				{ Size = Vector2_new(chunkW, chunkH) })
+			if not imgOk or image == nil then
+				image = nil
+				Renderer.Grid.MissingImages += 1
+			else
+				frame.ImageContent = Content.fromObject(image)
+			end
 
 			local bytes = chunkW * chunkH * 4
+			-- Tagged so the two per-chunk buffers show up under their own name in the
+			-- Developer Console. The image itself is engine memory and is not counted
+			-- here.
+			debug.setmemorycategory("Ro2D/Canvas")
 			local chunk: Chunk = {
 				Image = image,
 				Buffer = bcreate(bytes),
@@ -160,12 +179,19 @@ local function rebuildGrid()
 				MinX = chunkW, MaxX = -1, MinY = chunkH, MaxY = -1,
 				PrevMinX = chunkW, PrevMaxX = -1, PrevMinY = chunkH, PrevMaxY = -1,
 			}
+			debug.resetmemorycategory()
 			row[x] = chunk
 			table.insert(ChunkList, chunk)
 		end
 	end
 
 	UI.Init(CanvasFrame, targetWidth, targetHeight, displayScale, baseOffsetX, baseOffsetY)
+	if Renderer.Grid.MissingImages > 0 then
+		warn(("[Ro2D] %d of %d canvas chunks got no image; the EditableImage budget "
+			.. "is spent and that much of the screen cannot be drawn to.")
+			:format(Renderer.Grid.MissingImages,
+				#ChunkList + Renderer.Grid.MissingImages))
+	end
 	Renderer.Grid.IsReady = true
 	Renderer.ResetClip()
 end
@@ -274,7 +300,9 @@ function Renderer.System.SetBackground(callback)
 		local chunk = ChunkList[i]
 		local len = chunk.Width * chunk.Height * 4
 		bcopy(chunk.BgBuffer, 0, chunk.Buffer, 0, len)
-		chunk.Image:WritePixelsBuffer(V2_ZERO, chunk.SizeVec, chunk.Buffer)
+		if chunk.Image then
+			chunk.Image:WritePixelsBuffer(V2_ZERO, chunk.SizeVec, chunk.Buffer)
+		end
 
 		chunk.MinX = chunk.Width; chunk.MaxX = -1
 		chunk.MinY = chunk.Height; chunk.MaxY = -1
@@ -966,7 +994,8 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 			local rectH = uMaxY - uMinY + 1
 			local buf = chunk.Buffer
 
-			if rectW == cw and rectH == chunk.Height then
+			if not chunk.Image then
+			elseif rectW == cw and rectH == chunk.Height then
 				chunk.Image:WritePixelsBuffer(V2_ZERO, chunk.SizeVec, buf)
 			else
 				local requiredBytes = rectW * rectH * 4

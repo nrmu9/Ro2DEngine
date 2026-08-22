@@ -4,6 +4,23 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Chunks of the screen that never update, go black, or hold an old frame while
+  everything around them runs. Nothing released an EditableImage: the canvas, the
+  UI layer and each render worker's band were all left to be collected. The grid
+  is rebuilt on every resize, so the shared budget ran out, `CreateEditableImage`
+  started answering nil, and a chunk holding nil cannot be drawn to. Mostly seen
+  on phones, where the budget is smallest and resizes are commonest.
+- `CreateEditableImage` is checked on the canvas and the UI layer, as it already
+  was in the workers. A refused chunk is skipped rather than raising every frame,
+  and the grid warns once with how many it lost.
+
+### Added
+- Chunk and UI buffers are tagged with `debug.setmemorycategory`, so they are
+  attributed in the Developer Console rather than sitting in untagged Luau heap.
+
 ## [0.5.2] - 2026-08-12
 
 ### Fixed

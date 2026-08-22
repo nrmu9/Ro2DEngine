@@ -97,6 +97,12 @@ local function stop()
 		frameConn:Disconnect()
 		frameConn = nil
 	end
+	-- The band is not parented to anything, so destroying the actor does not take
+	-- it with us.
+	if image then
+		image:Destroy()
+		image = nil
+	end
 end
 actor.Destroying:Connect(stop)
 actor.AncestryChanged:Connect(function(_, parent)
