@@ -4,6 +4,18 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-08-23
+
+### Fixed
+- A renderer that stops working for the rest of the session after one bad frame,
+  reported live as millions of `invalid argument #1 to 'create' (size)` an hour
+  from every scene in a game. The command buffers are emptied once a frame and the
+  emptying sat behind four statements that can throw, so a frame that failed to
+  publish was not lost, it compounded: the next appended to it and the capacity
+  doubled until `buffer.create` refused, after which the first call of every frame
+  threw. The frame's work is guarded and the emptying is unconditional, so a
+  failure costs one dropped frame and one line in the log naming what threw.
+
 ## [0.5.3] - 2026-08-22
 
 ### Fixed
