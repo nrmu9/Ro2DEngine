@@ -22,6 +22,7 @@ PR.System = {}
 PR.Camera = { X = 0, Y = 0 }
 -- One report per session for a failing overlay: it runs every frame.
 local overlayWarned = false
+local presentWarned = false
 PR.Width = 0
 PR.Height = 0
 PR.IsReady = false
@@ -451,17 +452,7 @@ function PR.System.Init(canvasFrame, config)
 		rebuild()
 	end)
 
-	if presentConn then presentConn:Disconnect() end
-	presentConn = RunService:BindToRenderStep("Ro2DParallelPresent", Enum.RenderPriority.Last.Value + 1, function()
-		if not PR.IsReady then return end
-		-- A frame the caller says is identical to the last one is not presented at
-		-- all: the workers keep the pixels they already wrote, so nothing is
-		-- decoded and nothing is uploaded. See System.SkipFrame.
-		if PR._skip then
-			PR._skip = false
-			for i = 1, nBands do bands[i].cb:reset() end
-			return
-		end
+	local function presentFrame()
 		local rdy = ST.ready or 0
 		if rdy ~= lastReady then
 			lastReady = rdy
@@ -498,12 +489,30 @@ function PR.System.Init(canvasFrame, config)
 		-- reads when the id changes, so it can never pick up half a frame -- the
 		-- stream it finds under its own key is always the one for the id it saw.
 		for i = 1, nBands do
-			local bd = bands[i]
-			ST["c" .. i] = bd.cb:serialize()
-			bd.cb:reset()
+			ST["c" .. i] = bands[i].cb:serialize()
 		end
-		frameId += 1
-		ST.frame = frameId
+	end
+
+	if presentConn then presentConn:Disconnect() end
+	presentConn = RunService:BindToRenderStep("Ro2DParallelPresent", Enum.RenderPriority.Last.Value + 1, function()
+		if not PR.IsReady then return end
+		-- A frame the caller says is identical to the last one is not presented at
+		-- all: the workers keep the pixels they already wrote, so nothing is
+		-- decoded and nothing is uploaded. See System.SkipFrame.
+		if PR._skip then
+			PR._skip = false
+			for i = 1, nBands do bands[i].cb:reset() end
+			return
+		end
+		local ok, err = pcall(presentFrame)
+		for i = 1, nBands do bands[i].cb:reset() end
+		if ok then
+			frameId += 1
+			ST.frame = frameId
+		elseif not presentWarned then
+			presentWarned = true
+			warn("[Ro2D] frame dropped, further drops suppressed: " .. tostring(err))
+		end
 	end)
 end
 
