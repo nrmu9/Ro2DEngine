@@ -65,9 +65,8 @@ function CommandBuffer:tint(r, g, b, a)
 	self.cur = c + 5
 end
 
--- Scissor state, in screen space and inclusive. Recorded in the stream rather
--- than sent out of band because it has to take effect at the point in the frame
--- where it was set, not for the whole frame.
+-- Scissor state, screen space, inclusive. In-stream so it applies from this
+-- point in the frame, not to the whole frame.
 function CommandBuffer:clip(x0, y0, x1, y1)
 	self:_need(17)
 	local buf, c = self.buf, self.cur
@@ -85,24 +84,10 @@ function CommandBuffer:rect(x, y, w, h, r, g, b, a)
 	self.cur = c + 21
 end
 
--- A run of small axis-aligned squares under ONE op.
---
--- A particle field is thousands of two-pixel squares, and as individual RECTs it
--- is the most expensive thing in a frame -- not because of the pixels, which are
--- trivial, but because of everything around them. The stream is serialised to a
--- string and every worker copies and walks the whole of it, so one particle costs
--- twenty-one bytes and one dispatch PER WORKER. Eight workers and two thousand
--- particles is sixteen thousand method calls and a hundred thousand buffer reads
--- before a single pixel is touched, every frame -- which is how a heavy frame
--- exhausts a parallel resumption's time budget.
---
--- Batched, the same field is one op, thirteen bytes each, and a tight loop inside
--- the rasteriser with its buffer, width and scissor hoisted once for the run.
---
--- `size` is the side in whole pixels, which is what the per-rect path drew
--- anyway: it floors the extent, so a 2.6-wide square covered two pixels. The
--- position stays f32 because the camera offset is fractional and rounding here
--- would make a two-pixel particle jitter by a pixel as the camera moves.
+-- Many small axis-aligned squares under ONE op: 13 bytes and no dispatch per
+-- square, against 21 bytes and one dispatch per worker as RECTs. `size` is
+-- whole pixels (the extent floors); the position stays f32 so particles do
+-- not jitter against a fractional camera offset.
 function CommandBuffer:beginPoints()
 	self:_need(3)
 	local c = self.cur
@@ -192,9 +177,7 @@ end
 function CommandBuffer.decode(bytes: string, h)
 	local buf = buffer.fromstring(bytes)
 	local len = buffer.len(buf)
-	-- Bound once for the whole stream rather than looked up per command. Every
-	-- worker walks every command of every frame, so one hash lookup per command is
-	-- one hash lookup per command per worker per frame.
+	-- Handlers bound once per stream, not looked up per command.
 	local fClear, fTint, fClip = h.clear, h.tint, h.setClip
 	local fRect, fRectRot, fPoints = h.rect, h.rectRot, h.points
 	local fSprite, fSpriteEx, fText = h.sprite, h.spriteEx, h.text
@@ -230,9 +213,8 @@ function CommandBuffer.decode(bytes: string, h)
 				f % 2 == 1, f >= 2)
 			c += 24
 		elseif op == OP.POINTS then
-			-- Handed the buffer and a range rather than unpacked here: the whole point
-			-- of the batch is that the rasteriser walks it once with its state hoisted,
-			-- instead of this loop dispatching per square.
+			-- Handed the buffer and a range; the rasteriser walks it with its
+			-- state hoisted.
 			local n = ru16(buf, c + 1)
 			fPoints(h, buf, c + 3, n)
 			c += 3 + n * 13

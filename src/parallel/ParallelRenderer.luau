@@ -28,23 +28,10 @@ PR.Height = 0
 PR.IsReady = false
 PR.Compute = ComputePool
 
--- One command stream PER BAND, and the canvas rectangle each one covers.
---
--- There used to be a single stream that every worker copied and walked in full.
--- That is the real cost of this renderer: a command is decoded once per worker
--- whether or not it lands anywhere near that worker's band, so eight workers meant
--- eight times the decode work for a scene, and seven eighths of it produced
--- nothing. On a heavy frame that is what exhausts a parallel resumption's time
--- budget -- the errors name whichever primitive the clock happened to stop in,
--- which is why they name a different one every time.
---
--- Now each command is bounded once, here, on the main thread, and written only
--- into the bands it actually touches. The test moves from N workers to one place,
--- and a band's stream carries its own share of the scene instead of all of it.
---
--- State commands -- clear, tint, clip -- have no position and go to every band.
--- Order within a band is preserved because every band is appended to in the same
--- order the calls arrive, so a clip still precedes what it clips.
+-- One command stream PER BAND: each command is bounded once on the main
+-- thread and written only into the bands it touches. State commands -- clear,
+-- tint, clip -- have no position and go to every band; order within a band
+-- matches call order, so a clip still precedes what it clips.
 local bands = {}
 local nBands = 0
 local ST = SharedTableRegistry:GetSharedTable("Ro2D_Frame")
@@ -101,29 +88,41 @@ end
 
 -- ------------------------------------------------------------- routing ------
 
--- Bounds are canvas-space and INCLUSIVE, matching how the rasteriser clamps.
--- Every one below is conservative: a band may be handed a command that turns out
--- to paint nothing in it, and that costs a wasted decode. The opposite mistake --
--- a band NOT handed a command that does touch it -- is a hole in the picture at a
--- band seam, so every bound here rounds outwards.
+-- Bounds are canvas-space, INCLUSIVE, and conservative: a wasted decode is
+-- cheap, a band not told about a command that touches it is a hole at a seam.
 
 -- The scene has one band on most canvases, and the whole test is skipped there.
 local function only()
 	return nBands == 1 and bands[1].cb or nil
 end
 
+-- The present step empties the bands only when it actually runs; live
+-- clients have had it stall while scenes kept recording, compounding the
+-- buffers until buffer.create threw. The first draw of each render step
+-- empties them on the recording side too, so a stalled present holds a
+-- bounded couple of frames, not unbounded growth. Never during the present
+-- itself: the overlay records there, and signals fire newest-first, so the
+-- step counter can sit a step ahead -- an overlay draw that reset would
+-- wipe the scene's frame and publish the overlay alone.
+local stepId, openedAt = 0, -1
+local presenting = false
+local function openFrame()
+	if presenting or openedAt == stepId then return end
+	openedAt = stepId
+	for i = 1, nBands do bands[i].cb:reset() end
+end
+
 function PR.Draw.Clear(r, g, b, a)
 	if not PR.IsReady then return end
+	openFrame()
 	for i = 1, nBands do bands[i].cb:clear(r, g, b, a) end
 end
--- Restricts subsequent drawing to a rectangle, in the same world space the draw
--- calls use. Resets to the whole surface at the start of every frame, so a scene
--- that errors part-way through cannot leave the next one clipped.
---
--- Broadcast rather than routed. A clip is state: a band that is handed the shapes
--- but not the clip in front of them draws them unclipped.
+-- World-space clip rectangle; resets to the whole surface each frame.
+-- Broadcast, not routed: a band handed shapes without the clip in front of
+-- them draws them unclipped.
 function PR.Draw.SetClip(x, y, w, h)
 	if not PR.IsReady then return end
+	openFrame()
 	if w <= 0 or h <= 0 then
 		-- empty: nothing draws until the clip is cleared
 		for i = 1, nBands do bands[i].cb:clip(0, 0, -1, -1) end
@@ -134,10 +133,12 @@ function PR.Draw.SetClip(x, y, w, h)
 end
 function PR.Draw.ClearClip()
 	if not PR.IsReady then return end
+	openFrame()
 	for i = 1, nBands do bands[i].cb:clip(0, 0, PR.Width - 1, PR.Height - 1) end
 end
 function PR.Draw.Rect(x, y, w, h, r, g, b, a)
 	if not PR.IsReady then return end
+	openFrame()
 	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
 	local one = only()
 	if one then
@@ -154,6 +155,7 @@ function PR.Draw.Rect(x, y, w, h, r, g, b, a)
 end
 function PR.Draw.RectRotated(x, y, w, h, angle, r, g, b, a)
 	if not PR.IsReady then return end
+	openFrame()
 	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
 	local one = only()
 	if one then
@@ -168,17 +170,11 @@ function PR.Draw.RectRotated(x, y, w, h, angle, r, g, b, a)
 		end
 	end
 end
--- Many small squares as one command. Bracket the run with Begin/End and call
--- Point for each; see CommandBuffer.beginPoints for why a particle field is worth
--- a command of its own.
---
--- Routed per POINT rather than per run, which is the whole reason this matters
--- for a particle field: a band ends up carrying its own particles and no others.
---
--- `size` is the side in pixels and is floored, which is exactly what a Rect of a
--- fractional size already covered.
+-- Batched points, routed per POINT rather than per run, so a band carries
+-- its own particles and no others. `size` is the side in pixels and floors.
 function PR.Draw.BeginPoints()
 	if not PR.IsReady then return end
+	openFrame()
 	for i = 1, nBands do bands[i].cb:beginPoints() end
 end
 function PR.Draw.Point(x, y, size, r, g, b, a)
@@ -186,13 +182,8 @@ function PR.Draw.Point(x, y, size, r, g, b, a)
 	local s = floor(size)
 	if s <= 0 then return end
 	if s > 255 then s = 255 end
-	-- Offset by the side that will actually be DRAWN, not by the one asked for.
-	--
-	-- The square is `s` pixels wide because the extent is floored, but the corner
-	-- was being placed half of the unfloored `size` back -- so a 2.6-wide particle
-	-- drew two pixels centred a third of a pixel left and up of where it was meant
-	-- to be. Small, constant, and in one direction, which is exactly how it read: a
-	-- trail sitting slightly off the back of the bullet rather than behind it.
+	-- Offset by the floored side actually drawn, or every particle sits a
+	-- fraction of a pixel off centre in one direction.
 	local x0 = x - s * 0.5 - PR.Camera.X
 	local y0 = y - s * 0.5 - PR.Camera.Y
 	a = a or 255
@@ -215,6 +206,7 @@ function PR.Draw.EndPoints()
 end
 function PR.Draw.Sprite(x, y, sprite, flipX, flipY)
 	if not (PR.IsReady and sprite) then return end
+	openFrame()
 	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
 	local id = spriteIdOf(sprite)
 	local one = only()
@@ -233,6 +225,7 @@ function PR.Draw.Sprite(x, y, sprite, flipX, flipY)
 end
 function PR.Draw.SpriteEx(x, y, sprite, opts)
 	if not (PR.IsReady and sprite) then return end
+	openFrame()
 	opts = opts or {}
 	local scale, rot = opts.Scale or 1, opts.Rotation or 0
 	local tr, tg, tb = opts.TintR or 255, opts.TintG or 255, opts.TintB or 255
@@ -253,18 +246,13 @@ function PR.Draw.SpriteEx(x, y, sprite, opts)
 		end
 	end
 end
--- The geometry is Shapes', shared with the serial backend, so a circle is the same
--- circle either way. Only the destination differs: a distance field is thousands of
--- single pixels, so the whole figure travels as one batched command.
---
--- Delegated to Rect rather than given its own band walk, so a pixel cannot land in
--- a different band from the rect covering the same coordinate.
+-- Geometry is Shapes', shared with the serial backend. Delegated to Rect so
+-- a pixel lands in the same band as the rect covering that coordinate.
 function PR.Draw.Pixel(x, y, r, g, b, a)
 	if PR.IsReady then PR.Draw.Rect(x, y, 1, 1, r, g, b, a) end
 end
--- TOP-LEFT anchored, which is why this is not Draw.Point: Shapes hands out the
--- pixel it wants filled, not the centre of a square, and backing off half a pixel
--- would move a whole figure up and left by one.
+-- TOP-LEFT anchored, unlike Draw.Point: Shapes hands out the pixel to fill,
+-- not the centre of a square.
 local function plotPoint(x, y, r, g, b, a)
 	local x0 = x - PR.Camera.X
 	local y0 = y - PR.Camera.Y
@@ -309,6 +297,7 @@ function PR.Draw.MeasureText(text, font, scale)
 end
 function PR.Draw.Text(x, y, text, font, opts)
 	if not (PR.IsReady and font and text) then return end
+	openFrame()
 	local s = tostring(text)
 	if s == "" then return end
 	opts = opts or {}
@@ -357,9 +346,8 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 		end
 	end
 	table.clear(workers)
-	-- Drop the streams of the layout being replaced. A resolution change can leave
-	-- fewer bands than before, and a key nothing reads any more is still a copy of
-	-- a frame held in the shared table for the rest of the session.
+	-- Drop the replaced layout's streams; a key nothing reads any more still
+	-- holds a frame in the shared table.
 	for i = 1, nBands do ST["c" .. i] = nil end
 	table.clear(bands)
 	nBands = 0
@@ -404,7 +392,7 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 	end
 end
 
-local presentConn
+local stepConn, presentBound
 local cfgFixed, cfgFill, cfgPixelated, cfgWorkerCount = nil, false, true, 4
 local rebuild
 
@@ -466,14 +454,8 @@ function PR.System.Init(canvasFrame, config)
 			for i = 1, nBands do bands[i].cb:tint(0, 0, 0, PR._fadeA) end
 		end
 		if PR._overlay then
-		-- An overlay is screen space by definition: it is drawn after the world and
-		-- has nothing to do with where the camera is looking. Every draw call bakes
-		-- the camera in as it is recorded, so it is zeroed for the duration -- a
-		-- fight's camera was otherwise carrying the overlay off screen with it, and
-		-- moving it around while it went.
-		--
-		-- Errors are reported once. This runs every frame, so one bad overlay would
-		-- otherwise be either silent or fifty thousand lines of log.
+		-- Overlays are screen space: the camera is zeroed while recording.
+		-- Errors are reported once; this runs every frame.
 			local ocx, ocy = PR.Camera.X, PR.Camera.Y
 			PR.Camera.X, PR.Camera.Y = 0, 0
 			local ok, err = pcall(PR._overlay)
@@ -485,27 +467,33 @@ function PR.System.Init(canvasFrame, config)
 		end
 		ST.camX = 0
 		ST.camY = 0
-		-- Every band's stream is published BEFORE the frame id moves. A worker only
-		-- reads when the id changes, so it can never pick up half a frame -- the
-		-- stream it finds under its own key is always the one for the id it saw.
+		-- Streams publish BEFORE the frame id moves; a worker only reads on an
+		-- id change, so it can never pick up half a frame.
 		for i = 1, nBands do
 			ST["c" .. i] = bands[i].cb:serialize()
 		end
 	end
 
-	if presentConn then presentConn:Disconnect() end
-	presentConn = RunService:BindToRenderStep("Ro2DParallelPresent", Enum.RenderPriority.Last.Value + 1, function()
+	-- The step counter openFrame keys on, off the same event scenes record with.
+	if stepConn then stepConn:Disconnect() end
+	stepConn = RunService.RenderStepped:Connect(function()
+		stepId += 1
+	end)
+	-- BindToRenderStep returns nothing: unbind by name, or a second Init throws.
+	if presentBound then RunService:UnbindFromRenderStep("Ro2DParallelPresent") end
+	presentBound = true
+	RunService:BindToRenderStep("Ro2DParallelPresent", Enum.RenderPriority.Last.Value + 1, function()
 		if not PR.IsReady then return end
-		-- A frame the caller says is identical to the last one is not presented at
-		-- all: the workers keep the pixels they already wrote, so nothing is
-		-- decoded and nothing is uploaded. See System.SkipFrame.
+		-- See System.SkipFrame: nothing decoded, nothing uploaded.
 		if PR._skip then
 			PR._skip = false
 			for i = 1, nBands do bands[i].cb:reset() end
 			return
 		end
+		presenting = true
 		local ok, err = pcall(presentFrame)
 		for i = 1, nBands do bands[i].cb:reset() end
+		presenting = false
 		if ok then
 			frameId += 1
 			ST.frame = frameId
@@ -548,20 +536,9 @@ end
 function PR.System.SetBackground()
 	return false
 end
--- Declares this frame identical to the one on screen.
---
--- The canvas is persistent: workers write their band and it stays written, so a
--- frame that would paint exactly the same pixels does not need to be painted. A
--- scene sitting behind a settled modal is the case this exists for -- the panel
--- has finished fading, nothing under it is moving, and the composite on screen is
--- already the answer. Compositing it again every frame costs a full decode and a
--- full image upload per worker to produce the picture that is already there.
---
--- Called INSTEAD of drawing, not after it: the command buffer is discarded, so
--- anything recorded before this is thrown away rather than deferred.
---
--- One frame only. Every frame that should hold has to say so, which is what stops
--- a scene forgetting to start drawing again.
+-- Declares this frame identical to the one on screen: the canvas is
+-- persistent, so nothing is decoded or uploaded. Called INSTEAD of drawing --
+-- recorded commands are discarded, not deferred. One frame only.
 function PR.System.SkipFrame()
 	PR._skip = true
 end

@@ -127,10 +127,8 @@ export type Ro2DAPI = {
 		SpriteEx: (worldX: number, worldY: number, sprite: Sprite, opts: SpriteDrawOptions?) -> (),
 		Rect: (worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?) -> (),
 		RectRotated: (worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?) -> (),
-		-- Many small squares as one command. Bracket a run with BeginPoints and
-		-- EndPoints and call Point for each; on the parallel renderer that is one
-		-- command for the whole field instead of one per square, which is what keeps
-		-- a large particle system inside a worker's time budget.
+		-- Batched points: bracket a run with BeginPoints/EndPoints and call
+		-- Point for each square.
 		BeginPoints: () -> (),
 		Point: (worldX: number, worldY: number, size: number, r: number, g: number, b: number, a: number?) -> (),
 		EndPoints: () -> (),
@@ -194,10 +192,7 @@ local drawSprite = Renderer.Draw.Sprite
 
 local Ro2D
 local ParallelRenderer, activeIsParallel = nil, false
--- How many render workers a caller gets without asking for a number. Four is the
--- floor worth having: it is what a modest phone can keep busy, and the band split
--- costs a little per worker, so more is a choice a scene makes rather than a
--- default it inherits.
+-- Render workers a caller gets without asking; more is a per-scene choice.
 local DEFAULT_WORKERS = 4
 local inputLocked = false
 local function rawMousePos()
@@ -247,11 +242,8 @@ local function applyIsolate2D()
 end
 
 
--- The overlay is owned here rather than by a renderer. Each backend keeps its own
--- copy, and a scene that switches between them (parallel menus, a serial fight)
--- would otherwise leave one of them holding nothing -- which is how a debug
--- overlay registered once at start-up came to vanish the moment a fight began.
--- Kept at this level and re-applied on every Init, it survives the swap.
+-- Owned here and re-applied on every Init, so the overlay survives a backend
+-- swap.
 local overlayFn = nil
 local function applyOverlay()
 	if activeIsParallel and ParallelRenderer then
@@ -260,9 +252,8 @@ local function applyOverlay()
 		Renderer.System.SetOverlay(overlayFn)
 	end
 end
--- Held as locals as well as fields. `bindBackend` empties the table before it
--- fills it, and this table IS the one the caller holds, so reading these back off
--- it mid-bind would read what the clear had just removed.
+-- Held as locals too: bindBackend clears the caller's table before refilling
+-- it, so these cannot be read back off it mid-bind.
 local function systemSetOverlay(fn)
 	overlayFn = fn
 	applyOverlay()
@@ -270,35 +261,20 @@ end
 local function noFade() end
 local systemInit
 
--- ONE renderer with two backends behind it.
---
--- They used to be two objects handed straight to the caller. `Ro2D.Draw` was
--- REPLACED on Init, so anything holding it from before -- or holding a function
--- taken off it -- went on talking to the backend that was no longer running. The
--- System swap was worse, because it only went one way: a parallel Init
--- overwrote SetTint, SetFade and five others, and a serial Init afterwards put
--- none of them back, so the serial scene drove the parallel renderer's state and
--- its tint and fade went nowhere.
---
--- The tables the caller holds now never change identity. Init re-points what is
--- inside them, in both directions, every time.
--- No __index fallback to a backend on either of these. Binding is TOTAL -- every
--- call the caller can make is written in by `bindBackend` -- because a fallback
--- is exactly how a function belonging to the renderer that is NOT running
--- survives a swap and quietly keeps being called.
+-- One renderer, two backends. The tables the caller holds never change
+-- identity: Init re-points their contents both directions, and binding is
+-- TOTAL -- no __index fallback, so nothing from the inactive backend
+-- survives a swap.
 local DRAW, SYSTEM = {}, {}
--- Both backends read the SAME camera table, so `Ro2D.Camera` is one object for
--- the life of the session. Assigned rather than copied: the serial renderer bound
--- its camera to an upvalue at load, so the table has to be the one it already
--- has, and the parallel one reads its own field per call and can be pointed here.
+-- One camera table for the session, shared by both backends. Assigned, not
+-- copied: the serial renderer binds it to an upvalue at load.
 local CAMERA = Renderer.Camera
 
 local function bindBackend(be)
 	table.clear(DRAW)
 	for k, v in pairs(be.Draw) do DRAW[k] = v end
-	-- Everything the backend offers, then the three this module owns whichever
-	-- backend is running. SetFade is a no-op on a renderer that has none, rather
-	-- than a missing function, so a caller never has to ask which it is talking to.
+	-- Everything the backend offers, then the three this module owns. SetFade
+	-- is a no-op where a backend has none, never a missing function.
 	table.clear(SYSTEM)
 	for k, v in pairs(be.System) do SYSTEM[k] = v end
 	SYSTEM.Init = systemInit
@@ -309,11 +285,7 @@ end
 
 function systemInit(canvasFrame, config)
 	if config and config.Isolate2D then applyIsolate2D() end
-	-- Threaded unless the caller says otherwise, on four workers unless the caller
-	-- says how many. It is the faster path on every device that has the cores for
-	-- it, so it is what you get without asking; `Parallel = false` is the way out,
-	-- for a device that cannot or a bug that needs the simpler renderer to compare
-	-- against.
+	-- Threaded by default; `Parallel = false` opts out.
 	local wantParallel = not (config and config.Parallel == false)
 	if wantParallel then
 		ParallelRenderer = ParallelRenderer
@@ -375,10 +347,8 @@ Ro2D = {
 	},
 }
 
--- The surface is live before Init, bound to the single-threaded backend. Without
--- this a caller that touched `Draw` or `System` between requiring the engine and
--- initialising it would find an empty table rather than a renderer that has not
--- started yet, and "attempt to call a nil value" is a worse way to learn that.
+-- Bound before Init, so early Draw/System access finds a renderer rather
+-- than an empty table.
 bindBackend(Renderer)
 
 local proxy = setmetatable({}, {

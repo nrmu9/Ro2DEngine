@@ -19,9 +19,7 @@ function Rasterizer.new(buf: buffer, bufW: number, bufH: number, sprites, fonts)
 	return setmetatable({
 		buf = buf, w = bufW, h = bufH,
 		ox = 0, oy = 0,
-		-- Inclusive band-local scissor. Every primitive already clamps to the band,
-		-- so clipping is the same clamp against tighter bounds and costs nothing
-		-- when no clip is set.
+		-- Inclusive band-local scissor; free when unset.
 		cx0 = 0, cy0 = 0, cx1 = bufW - 1, cy1 = bufH - 1,
 		sprites = sprites or {},
 		fonts = fonts or {},
@@ -229,14 +227,9 @@ function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
 	if minY < cy0b then minY = cy0b end
 	if maxX > cx1b then maxX = cx1b end
 	if maxY > cy1b then maxY = cy1b end
-	-- Per scanline, the exact x-range the rotated rect covers, rather than the whole
-	-- of its bounding box. A long thin bar at 45 degrees -- which is every connector
-	-- in a tree view and every glyph stroke -- has a bounding box hundreds of times
-	-- its own area, and testing all of it was enough to exhaust a parallel worker's
-	-- execution budget on a single frame.
-	--
-	-- The range is widened by a pixel each side and the original test is kept, so
-	-- this narrows what is visited without changing what is drawn.
+	-- Per scanline, the exact x-range the rotated rect covers -- a thin bar at
+	-- 45 degrees has a bounding box hundreds of times its area. Widened a pixel
+	-- each side; the per-pixel test stays, so only the visits narrow.
 	for py = minY, maxY do
 		local dyc = py - cy
 		local base = py * bw
@@ -349,10 +342,7 @@ function Rasterizer:spriteEx(wx, wy, spriteId, scale, rot, tintR, tintG, tintB, 
 	end
 end
 
--- Draw.Sprite is positioned by its top-left corner, spriteEx by its centre, so
--- the coordinate has to be converted rather than forwarded. Without this every
--- Draw.Sprite lands half a sprite up and to the left of where the single
--- threaded renderer puts it.
+-- Sprite anchors top-left, spriteEx centre: convert, do not forward.
 function Rasterizer:sprite(wx, wy, spriteId, flipX, flipY)
 	local sprite = self.sprites[spriteId]
 	if not sprite then return end
@@ -381,17 +371,9 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 			local ox = floor(penX + g.OX * scale - self.ox)
 			local oy = floor(wy + g.OY * scale - self.oy)
 			local dw, dh = floor(gW * scale), floor(gH * scale)
-			-- Only the part of the glyph that can land inside the clip.
-			--
-			-- Both loops used to walk the glyph's FULL size and test each pixel from
-			-- the inside, so a glyph scrolled off the edge -- or simply drawn large --
-			-- spun through its whole area to paint a sliver of it or none of it. In a
-			-- parallel worker that is not merely slow: the band's whole frame runs on
-			-- one resumption, and Roblox kills a resumption that overruns its budget.
-			-- Text was the largest single contributor to that, and the workers were
-			-- dying inside this function.
-			--
-			-- The ranges are exact, so the per-pixel bounds tests below go with them.
+			-- Only the part of the glyph inside the clip; a full-glyph walk on
+			-- large or off-screen text blows a worker's resumption budget. The
+			-- ranges are exact, so no per-pixel bounds tests follow.
 			local pxA = cx0b - ox
 			if pxA < 0 then pxA = 0 end
 			local pxB = cx1b - ox
@@ -410,9 +392,7 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 				local sxB = ceil(fx1) - 1
 				colS[px] = sxA
 				colN[px] = sxB - sxA + 1
-				-- Where this column's weights start. It used to be carried as a
-				-- running total through the blit, which only works if the blit visits
-				-- every column -- and it no longer does.
+				-- Absolute weight offset; the blit no longer visits every column.
 				colO[px] = wIdx
 				local sx = sxA
 				while sx <= sxB do

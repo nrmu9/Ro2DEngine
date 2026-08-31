@@ -8,10 +8,8 @@ local MB1 = Enum.UserInputType.MouseButton1
 local MB2 = Enum.UserInputType.MouseButton2
 local WHEEL = Enum.UserInputType.MouseWheel
 local TOUCH = Enum.UserInputType.Touch
--- Every pad Roblox can report, not only the first. A controller does not have to
--- enumerate as Gamepad1 -- another pad paired ahead of it, or a reconnect, is
--- enough to move it -- and watching Gamepad1 alone meant those players never
--- turned the pad cursor on and never moved it.
+-- Every pad Roblox can report: a controller does not have to enumerate as
+-- Gamepad1.
 local PADS = {}
 for i = 1, 8 do
 	local t = Enum.UserInputType["Gamepad" .. i]
@@ -67,22 +65,9 @@ local function stickOf(pad): (number, number)
 	return 0, 0
 end
 
--- Whether a pad is being HELD, decided by looking at the pads rather than by
--- waiting to be told.
---
--- LastInputTypeChanged is how a device announces itself, and for a controller it
--- is not enough. It fires when something is USED, and the first thing a player on
--- a console does is push the left stick -- which on some devices leaves nothing
--- else to notice. Until it fired there was no pad and no gamepad mode, so the
--- cursor never appeared, no menu could be clicked, and a session that opened
--- straight into a fight left the ship sitting still. The only way out was to press
--- a button the player had no reason to press.
---
--- So the sticks are polled. Whichever pad is deflected IS the pad in hand: that
--- needs no event to have fired, it corrects a pick made during the join race when
--- the connected list was still empty, and it follows a player who puts one pad
--- down and picks another up. Only ever turns the flag ON -- a mouse or a
--- keyboard is what turns it off, and letting go of a stick is not that.
+-- Polled, not event-driven: LastInputTypeChanged does not fire for a stick
+-- push on some devices, so whichever pad is deflected IS the pad in hand.
+-- Only ever turns the flag ON; a mouse or keyboard turns it off.
 local function pollPads(now: number)
 	if activePad then
 		local sx, sy = stickOf(activePad)
@@ -91,9 +76,7 @@ local function pollPads(now: number)
 			return
 		end
 	end
-	-- Nothing on the pad we know about, so look at the rest -- but not every frame,
-	-- since it costs a state read per pad and the answer changes about as often as
-	-- someone swaps controllers.
+	-- Scanning the rest costs a state read per pad, so not every frame.
 	if activePad and now < rescanAt then return end
 	rescanAt = now + PAD_RESCAN
 	local ok, pads = pcall(function() return UserInputService:GetConnectedGamepads() end)
@@ -112,9 +95,7 @@ local function pollPads(now: number)
 end
 
 local function readStick()
-	-- Re-picked while none is known rather than only at start-up: on a console the
-	-- pad list can still be empty when this module loads, and a stick sends
-	-- InputChanged, so a player who only pushes it announces itself no other way.
+	-- Re-picked while none is known: the pad list can be empty at load.
 	if not activePad then activePad = firstPad() end
 	if not activePad then return 0, 0 end
 	local ok, states = pcall(function() return UserInputService:GetGamepadState(activePad) end)
@@ -137,10 +118,6 @@ local function ensureCursor()
 	cursorGui.IgnoreGuiInset = true
 	cursorGui.ResetOnSpawn = false
 	cursorGui.Enabled = false
-	-- Named, like everything else the engine puts in the tree. An unnamed instance
-	-- takes its class as its name, so this was a "Frame" containing a "UICorner"
-	-- and a "UIStroke" -- three names anything at all could also have, which is a
-	-- poor thing for a consumer auditing its own PlayerGui to have to accept.
 	cursorDot = Instance.new("Frame")
 	cursorDot.Name = "Ro2DCursorDot"
 	cursorDot.Size = UDim2.fromOffset(16, 16)

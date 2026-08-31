@@ -166,9 +166,7 @@ local function rebuildGrid()
 			end
 
 			local bytes = chunkW * chunkH * 4
-			-- Tagged so the two per-chunk buffers show up under their own name in the
-			-- Developer Console. The image itself is engine memory and is not counted
-			-- here.
+			-- Per-chunk buffers under their own name in the Developer Console.
 			debug.setmemorycategory("Ro2D/Canvas")
 			local chunk: Chunk = {
 				Image = image,
@@ -277,10 +275,8 @@ function Renderer.System.ScreenToCanvas(screenX: number, screenY: number): (numb
 	return floor((screenX - g.OffsetX) * inv), floor((screenY - g.OffsetY) * inv)
 end
 
--- Declares this frame identical to the one on screen. See the parallel renderer,
--- which is where this earns its keep; here the flush already uploads only what
--- changed, so a frame that drew nothing was already nearly free. It exists on
--- both so a scene never has to ask which renderer it is talking to.
+-- Declares this frame identical to the one on screen. Earns its keep on the
+-- parallel renderer; exists on both so scenes never ask which backend runs.
 local skipFrame = false
 function Renderer.System.SkipFrame()
 	skipFrame = true
@@ -317,9 +313,7 @@ local Camera = Renderer.Camera
 
 local EMPTY_OPTS = table.freeze({})
 
--- Scissor bounds in screen space, inclusive. Every primitive already clamped to
--- the surface, so clipping is that same clamp against tighter bounds -- there is
--- no cost when no clip is set, because the default IS the surface.
+-- Scissor bounds, screen space, inclusive; free when unset.
 local clipX0, clipY0, clipX1, clipY1 = 0, 0, -1, -1
 local function resetClip()
 	clipX0, clipY0 = 0, 0
@@ -327,10 +321,8 @@ local function resetClip()
 end
 Renderer.ResetClip = resetClip
 
--- Restricts subsequent drawing to a rectangle, in the same world space the draw
--- calls use. A zero or negative size clips everything away until the clip is
--- cleared. Clears itself at the end of every frame, so a scene that errors
--- part-way through cannot leave the next one clipped.
+-- World-space clip rectangle. Zero or negative size clips everything away;
+-- self-clears at the end of every frame.
 function Draw.SetClip(worldX: number, worldY: number, w: number, h: number)
 	if not Grid.IsReady then return end
 	if w <= 0 or h <= 0 then
@@ -792,19 +784,13 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 	end
 end
 
--- The batched-points API, which on the serial renderer is simply Rect.
---
--- It exists for the parallel one, where a particle field as thousands of separate
--- commands is the most expensive thing in a frame -- see CommandBuffer.beginPoints.
--- Here there is no stream to serialise and no worker to copy it, so a point IS a
--- one-pixel-or-so rect and the brackets have nothing to do. Present all the same,
--- so a caller never has to ask which renderer it is talking to.
+-- The batched-points API, which here is simply Rect; the brackets exist so
+-- callers never ask which backend they are talking to.
 function Draw.BeginPoints() end
 function Draw.EndPoints() end
 function Draw.Point(worldX: number, worldY: number, size: number, r: number, g: number, b: number, a: number?)
-	-- Offset by the side that will actually be drawn. See the parallel renderer:
-	-- backing off half of the UNFLOORED size put every particle a fraction of a
-	-- pixel left and up of centre, constantly and in one direction.
+	-- Offset by the floored side actually drawn, or every particle sits a
+	-- fraction of a pixel off centre in one direction.
 	local s = floor(size)
 	if s > 0 then
 		Draw.Rect(worldX - s * 0.5, worldY - s * 0.5, s, s, r, g, b, a)
@@ -951,9 +937,7 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 	end
 
 	if overlayFn then
-		-- An overlay is screen space by definition: it is drawn after the world and
-		-- has nothing to do with where the camera is looking. Every draw call bakes
-		-- the camera in, so it is zeroed for the duration.
+		-- Overlays are screen space: the camera is zeroed for the duration.
 		local ocx, ocy = Camera.X, Camera.Y
 		Camera.X, Camera.Y = 0, 0
 		local ok, err = pcall(overlayFn)

@@ -31,10 +31,8 @@ local OFF_X, OFF_Y = A("OffsetX"), A("OffsetY")
 local PIXELATED = A("Pixelated") == 1
 
 local imgSize = Vector2.new(BAND_W, BAND_H)
--- EditableImage is gated behind an experience setting, and the check that decides
--- whether it is available can also just fail to reach Roblox. Either way there is
--- no canvas to draw into, so say so once and stop rather than letting every worker
--- raise it on every frame for the length of a session.
+-- EditableImage can be unavailable, or the availability check can fail; say
+-- so once and stop.
 local imgOk, image = pcall(function()
 	return AssetService:CreateEditableImage({ Size = imgSize })
 end)
@@ -70,24 +68,13 @@ end)
 local ST = SharedTableRegistry:GetSharedTable("Ro2D_Frame")
 local lastFrame = -1
 
--- The write can start failing at any point in a session (the API status is
--- fetched, not fixed), and it runs once per worker per frame. Reported the first
--- time and never again: fifty thousand copies of one message is not a log.
+-- The write can start failing mid-session and runs per worker per frame;
+-- reported once.
 local writeWarned = false
 
--- A worker stops itself the moment it leaves the tree.
---
--- Changing the resolution rebuilds the bands, which destroys every worker actor
--- and makes new ones -- and a scene change does exactly that, since the menus and
--- the fight render at different sizes. Relying on Destroy to sever this
--- connection is not enough: a callback already scheduled for the frame still
--- runs, and by the time it reaches `task.synchronize` the script it belongs to is
--- no longer a descendant of an Actor, which is an error rather than a quiet
--- no-op. Every scene change threw one per worker.
---
--- Two ways in, because they answer different endings: Destroying is the actor
--- being taken apart, AncestryChanged is it being lifted out of the DataModel
--- without being destroyed.
+-- A worker stops itself when it leaves the tree: a callback already
+-- scheduled for the frame still runs, and task.synchronize outside an Actor
+-- throws. Destroying and AncestryChanged answer different endings.
 local alive = true
 local frameConn
 local function stop()
@@ -110,9 +97,8 @@ actor.AncestryChanged:Connect(function(_, parent)
 end)
 
 frameConn = RunService.RenderStepped:ConnectParallel(function()
-	-- Checked before anything else, and before the synchronize below in particular:
-	-- the destroy that invalidates this worker happens serially, so a parallel
-	-- callback that gets this far is safe for the rest of its run.
+	-- Before the synchronize: the destroy happens serially, so a callback
+	-- past this check is safe for the rest of its run.
 	if not alive then return end
 	local fid = ST.frame
 	if fid == nil or fid == lastFrame then
@@ -132,12 +118,9 @@ frameConn = RunService.RenderStepped:ConnectParallel(function()
 	local ok, err = pcall(image.WritePixelsBuffer, image, Vector2.zero, imgSize, buf)
 	if not ok and not writeWarned then
 		writeWarned = true
-		-- Once for the CANVAS, not once per worker. Every worker writes its own band
-		-- of the same image, so a failure is nearly always all eight of them failing
-		-- together on the same cause -- and eight copies of one message is one piece
-		-- of information wearing eight lines of the output. The flag below is local
-		-- and stops a worker repeating itself; the shared one stops its seven
-		-- neighbours saying the same thing.
+		-- Once for the CANVAS, not per worker: a failure is all of them
+		-- failing on the same cause. The local flag quiets this worker, the
+		-- shared one its neighbours.
 		local first = false
 		SharedTable.update(ST, "writeWarned", function(v)
 			first = v == nil

@@ -1,21 +1,9 @@
 --!optimize 2
 --!native
 
--- The two signed-distance shapes, as geometry alone.
---
--- Both renderers draw them, and both used to own a copy: the single-threaded one
--- had them and the threaded one simply did not, so `Draw.LineSDF` and
--- `Draw.CircleSDF` were calls the engine's own published API promised and one of
--- its two backends answered with nil. Threading is on by default, so that was
--- every caller.
---
--- Written once here and handed a `plot`, which is the only thing the two backends
--- disagree about: single-threaded it writes a pixel straight into a chunk;
--- threaded it appends to a batched point run. Neither of them knows what a circle
--- is, and neither of them can drift from the other.
---
--- Coordinates are WORLD, and `plot` is given world coordinates too -- the camera
--- is the renderer's business, not the shape's.
+-- The two signed-distance shapes as geometry alone, shared by both backends
+-- through `plot`. Coordinates are WORLD, for the shape and for `plot`; the
+-- camera is the renderer's business.
 
 local floor, min, max, sqrt, clamp = math.floor, math.min, math.max, math.sqrt, math.clamp
 
