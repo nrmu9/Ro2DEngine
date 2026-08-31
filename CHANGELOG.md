@@ -4,6 +4,28 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-08-31
+
+### Fixed
+- The gigabyte crash spiral again, at its actual root this time. 0.5.4 made the
+  present step's buffer emptying unconditional and the errors kept coming, which
+  proves the present binding itself stops being invoked on some clients while
+  scenes keep recording. The reset no longer depends on it: the first draw of
+  each render step empties the bands, keyed off the same RenderStepped event the
+  scenes record with, so a stalled present holds a bounded couple of frames
+  instead of growing until `buffer.create` refuses.
+- The overlay smearing copies of itself over a frozen scene while it was open.
+  Signals fire newest-first, so the step counter could move between the scene's
+  draw and the present -- and the overlay's first draw then read as a new frame,
+  wiped the scene's commands, and published the overlay alone onto the persistent
+  canvas. Recording during the present phase no longer opens a frame.
+- A second `System.Init` threw "already bound": `BindToRenderStep` returns
+  nothing, so the connection guard in front of it was dead code. The named
+  binding is now torn down by name.
+
+### Changed
+- Comments across `src` trimmed to short technical notes.
+
 ## [0.5.4] - 2026-08-23
 
 ### Fixed
