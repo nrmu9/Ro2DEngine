@@ -4,6 +4,21 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-09-04
+
+### Fixed
+- A held pointer that never let go. `Input` tracked the mouse buttons and the
+  touches by counting Began against Ended, and Roblox can drop the Ended
+  event: a scene switch that changes the resolution rebuilds the canvas under
+  the very press that asked for it, since a click fires on the down edge. The
+  button then read as down for the rest of the session, and because every
+  menu reads a click as "down now, not last frame", nothing could be pressed
+  again until the player rejoined -- reported as "after beating a boss I
+  can't click any buttons". Whatever is held is now re-asked every frame
+  against `IsMouseButtonPressed`, `IsKeyDown` and each touch's own
+  `UserInputState`, and only ever released by it: a press that began over a
+  Roblox prompt was never counted and polling does not count it now.
+
 ## [0.5.5] - 2026-08-31
 
 ### Fixed

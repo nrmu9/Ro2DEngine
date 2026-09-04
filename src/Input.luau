@@ -163,6 +163,8 @@ UserInputService.GamepadDisconnected:Connect(function()
 	activePad = firstPad()
 end)
 
+local touches = {}
+
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	-- A press is proof of which pad is in hand, and the cheapest correction there
 	-- is for a controller that enumerated somewhere unexpected.
@@ -179,7 +181,10 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	elseif t == MB2 then
 		mouse.RightDown = true
 	elseif t == TOUCH then
-		touchCount += 1
+		if not touches[input] then
+			touches[input] = true
+			touchCount += 1
+		end
 		mouse.LeftDown = true
 	end
 end)
@@ -195,10 +200,33 @@ UserInputService.InputEnded:Connect(function(input)
 	elseif t == MB2 then
 		mouse.RightDown = false
 	elseif t == TOUCH then
-		touchCount = touchCount > 0 and touchCount - 1 or 0
+		if touches[input] then
+			touches[input] = nil
+			touchCount -= 1
+		end
 		mouse.LeftDown = mb1Down or touchCount > 0
 	end
 end)
+
+local BEGIN, CHANGE = Enum.UserInputState.Begin, Enum.UserInputState.Change
+local function verifyHeld()
+	if mb1Down and not UserInputService:IsMouseButtonPressed(MB1) then mb1Down = false end
+	if mouse.RightDown and not UserInputService:IsMouseButtonPressed(MB2) then mouse.RightDown = false end
+	if touchCount > 0 then
+		for obj in pairs(touches) do
+			local st = obj.UserInputState
+			if st ~= BEGIN and st ~= CHANGE then
+				touches[obj] = nil
+				touchCount -= 1
+			end
+		end
+		if touchCount < 0 then touchCount = 0 end
+	end
+	mouse.LeftDown = mb1Down or touchCount > 0
+	for kc, down in pairs(keysDown) do
+		if down and not UserInputService:IsKeyDown(kc) then keysDown[kc] = false end
+	end
+end
 
 UserInputService.InputChanged:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
@@ -210,6 +238,7 @@ end)
 function Input.Flush()
 	table.clear(keysPressed)
 	mouse.ScrollDelta = 0
+	verifyHeld()
 	local pos = UserInputService:GetMouseLocation()
 	mouse.X = pos.X
 	mouse.Y = pos.Y
