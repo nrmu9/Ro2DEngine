@@ -4,6 +4,22 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2026-09-06
+
+### Fixed
+- A command buffer that grew until `buffer.create` refused it. Frames recorded
+  with nothing ever emptying the bands doubled the buffer past a gigabyte, and
+  the throw landed inside the scene's own frame handler at its first draw,
+  every frame, for the rest of the session: a screen that no longer updated
+  and buttons that no longer answered. A frame that would pass sixteen
+  megabytes is dropped instead, the buffer starts again and the next frame is
+  an ordinary one; the overflow is warned once with the size that was found,
+  so the cause can be read off a log.
+- A present that yields held the recording side shut. `presenting` is set for
+  the length of `presentFrame`, and an overlay that waited on something kept
+  it set across frames, during which `openFrame` never emptied the bands. The
+  hold is now ignored after two render steps.
+
 ## [0.5.6] - 2026-09-04
 
 ### Fixed

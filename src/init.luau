@@ -127,8 +127,6 @@ export type Ro2DAPI = {
 		SpriteEx: (worldX: number, worldY: number, sprite: Sprite, opts: SpriteDrawOptions?) -> (),
 		Rect: (worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?) -> (),
 		RectRotated: (worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?) -> (),
-		-- Batched points: bracket a run with BeginPoints/EndPoints and call
-		-- Point for each square.
 		BeginPoints: () -> (),
 		Point: (worldX: number, worldY: number, size: number, r: number, g: number, b: number, a: number?) -> (),
 		EndPoints: () -> (),
@@ -192,7 +190,6 @@ local drawSprite = Renderer.Draw.Sprite
 
 local Ro2D
 local ParallelRenderer, activeIsParallel = nil, false
--- Render workers a caller gets without asking; more is a per-scene choice.
 local DEFAULT_WORKERS = 4
 local inputLocked = false
 local function rawMousePos()
@@ -242,8 +239,6 @@ local function applyIsolate2D()
 end
 
 
--- Owned here and re-applied on every Init, so the overlay survives a backend
--- swap.
 local overlayFn = nil
 local function applyOverlay()
 	if activeIsParallel and ParallelRenderer then
@@ -252,8 +247,6 @@ local function applyOverlay()
 		Renderer.System.SetOverlay(overlayFn)
 	end
 end
--- Held as locals too: bindBackend clears the caller's table before refilling
--- it, so these cannot be read back off it mid-bind.
 local function systemSetOverlay(fn)
 	overlayFn = fn
 	applyOverlay()
@@ -261,20 +254,12 @@ end
 local function noFade() end
 local systemInit
 
--- One renderer, two backends. The tables the caller holds never change
--- identity: Init re-points their contents both directions, and binding is
--- TOTAL -- no __index fallback, so nothing from the inactive backend
--- survives a swap.
 local DRAW, SYSTEM = {}, {}
--- One camera table for the session, shared by both backends. Assigned, not
--- copied: the serial renderer binds it to an upvalue at load.
 local CAMERA = Renderer.Camera
 
 local function bindBackend(be)
 	table.clear(DRAW)
 	for k, v in pairs(be.Draw) do DRAW[k] = v end
-	-- Everything the backend offers, then the three this module owns. SetFade
-	-- is a no-op where a backend has none, never a missing function.
 	table.clear(SYSTEM)
 	for k, v in pairs(be.System) do SYSTEM[k] = v end
 	SYSTEM.Init = systemInit
@@ -285,7 +270,6 @@ end
 
 function systemInit(canvasFrame, config)
 	if config and config.Isolate2D then applyIsolate2D() end
-	-- Threaded by default; `Parallel = false` opts out.
 	local wantParallel = not (config and config.Parallel == false)
 	if wantParallel then
 		ParallelRenderer = ParallelRenderer
@@ -304,7 +288,6 @@ function systemInit(canvasFrame, config)
 		Renderer.System.Init(canvasFrame, config)
 		bindBackend(Renderer)
 	end
-	-- Last, so it lands on whichever backend this Init just made current.
 	applyOverlay()
 end
 
@@ -347,8 +330,6 @@ Ro2D = {
 	},
 }
 
--- Bound before Init, so early Draw/System access finds a renderer rather
--- than an empty table.
 bindBackend(Renderer)
 
 local proxy = setmetatable({}, {

@@ -2,17 +2,14 @@
 --!native
 
 local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
-local Players = game:GetService("Players")
 local AssetService = game:GetService("AssetService")
-local ContextActionService = game:GetService("ContextActionService")
 
 local Input = require(script.Parent:WaitForChild("Input"))
 local UI = require(script.Parent:WaitForChild("UI"))
 
 local writeu32, readu32 = buffer.writeu32, buffer.readu32
 local bcopy, bcreate = buffer.copy, buffer.create
-local floor, sqrt, min, max, clamp = math.floor, math.sqrt, math.min, math.max, math.clamp
+local floor, min, max, clamp = math.floor, math.min, math.max, math.clamp
 local cos, sin, abs = math.cos, math.sin, math.abs
 local ceil = math.ceil
 local strbyte = string.byte

@@ -6,21 +6,17 @@ local SharedTableRegistry = game:GetService("SharedTableRegistry")
 
 local engine = script.Parent.Parent
 local CommandBuffer = require(engine:WaitForChild("CommandBuffer"))
--- Shared with the single-threaded backend, so the two cannot draw a different
--- circle. See Draw.CircleSDF below.
 local Shapes = require(engine:WaitForChild("Shapes"))
 local FontCodec = require(script.Parent:WaitForChild("FontCodec"))
 local ComputePool = require(script.Parent:WaitForChild("ComputePool"))
 local DrawBounds = require(script.Parent:WaitForChild("DrawBounds"))
 
 local floor, min, max, ceil = math.floor, math.min, math.max, math.ceil
-local abs, cos, sin = math.abs, math.cos, math.sin
 
 local PR = {}
 PR.Draw = {}
 PR.System = {}
 PR.Camera = { X = 0, Y = 0 }
--- One report per session for a failing overlay: it runs every frame.
 local overlayWarned = false
 local presentWarned = false
 PR.Width = 0
@@ -28,10 +24,6 @@ PR.Height = 0
 PR.IsReady = false
 PR.Compute = ComputePool
 
--- One command stream PER BAND: each command is bounded once on the main
--- thread and written only into the bands it touches. State commands -- clear,
--- tint, clip -- have no position and go to every band; order within a band
--- matches call order, so a clip still precedes what it clips.
 local bands = {}
 local nBands = 0
 local ST = SharedTableRegistry:GetSharedTable("Ro2D_Frame")
@@ -86,28 +78,16 @@ local function fontIdOf(font)
 	return id
 end
 
--- ------------------------------------------------------------- routing ------
-
--- Bounds are canvas-space, INCLUSIVE, and conservative: a wasted decode is
--- cheap, a band not told about a command that touches it is a hole at a seam.
-
--- The scene has one band on most canvases, and the whole test is skipped there.
 local function only()
 	return nBands == 1 and bands[1].cb or nil
 end
 
--- The present step empties the bands only when it actually runs; live
--- clients have had it stall while scenes kept recording, compounding the
--- buffers until buffer.create threw. The first draw of each render step
--- empties them on the recording side too, so a stalled present holds a
--- bounded couple of frames, not unbounded growth. Never during the present
--- itself: the overlay records there, and signals fire newest-first, so the
--- step counter can sit a step ahead -- an overlay draw that reset would
--- wipe the scene's frame and publish the overlay alone.
 local stepId, openedAt = 0, -1
 local presenting = false
+local presentingAt = -1
 local function openFrame()
-	if presenting or openedAt == stepId then return end
+	if presenting and stepId - presentingAt < 2 then return end
+	if openedAt == stepId then return end
 	openedAt = stepId
 	for i = 1, nBands do bands[i].cb:reset() end
 end
@@ -117,14 +97,10 @@ function PR.Draw.Clear(r, g, b, a)
 	openFrame()
 	for i = 1, nBands do bands[i].cb:clear(r, g, b, a) end
 end
--- World-space clip rectangle; resets to the whole surface each frame.
--- Broadcast, not routed: a band handed shapes without the clip in front of
--- them draws them unclipped.
 function PR.Draw.SetClip(x, y, w, h)
 	if not PR.IsReady then return end
 	openFrame()
 	if w <= 0 or h <= 0 then
-		-- empty: nothing draws until the clip is cleared
 		for i = 1, nBands do bands[i].cb:clip(0, 0, -1, -1) end
 		return
 	end
@@ -170,8 +146,6 @@ function PR.Draw.RectRotated(x, y, w, h, angle, r, g, b, a)
 		end
 	end
 end
--- Batched points, routed per POINT rather than per run, so a band carries
--- its own particles and no others. `size` is the side in pixels and floors.
 function PR.Draw.BeginPoints()
 	if not PR.IsReady then return end
 	openFrame()
@@ -182,8 +156,6 @@ function PR.Draw.Point(x, y, size, r, g, b, a)
 	local s = floor(size)
 	if s <= 0 then return end
 	if s > 255 then s = 255 end
-	-- Offset by the floored side actually drawn, or every particle sits a
-	-- fraction of a pixel off centre in one direction.
 	local x0 = x - s * 0.5 - PR.Camera.X
 	local y0 = y - s * 0.5 - PR.Camera.Y
 	a = a or 255
@@ -214,7 +186,6 @@ function PR.Draw.Sprite(x, y, sprite, flipX, flipY)
 		one:sprite(x0, y0, id, flipX, flipY)
 		return
 	end
-	-- The rasteriser treats this position as the TOP LEFT.
 	local ax, ay, bx, by = DrawBounds.sprite(x0, y0, sprite.Width, sprite.Height)
 	for i = 1, nBands do
 		local bd = bands[i]
@@ -237,7 +208,6 @@ function PR.Draw.SpriteEx(x, y, sprite, opts)
 		one:spriteEx(x0, y0, id, scale, rot, tr, tg, tb, al, opts.FlipX, opts.FlipY)
 		return
 	end
-	-- Centred here, unlike Sprite.
 	local ax, ay, bx, by = DrawBounds.spriteEx(x0, y0, sprite.Width, sprite.Height, scale, rot)
 	for i = 1, nBands do
 		local bd = bands[i]
@@ -246,13 +216,9 @@ function PR.Draw.SpriteEx(x, y, sprite, opts)
 		end
 	end
 end
--- Geometry is Shapes', shared with the serial backend. Delegated to Rect so
--- a pixel lands in the same band as the rect covering that coordinate.
 function PR.Draw.Pixel(x, y, r, g, b, a)
 	if PR.IsReady then PR.Draw.Rect(x, y, 1, 1, r, g, b, a) end
 end
--- TOP-LEFT anchored, unlike Draw.Point: Shapes hands out the pixel to fill,
--- not the centre of a square.
 local function plotPoint(x, y, r, g, b, a)
 	local x0 = x - PR.Camera.X
 	local y0 = y - PR.Camera.Y
@@ -270,8 +236,6 @@ local function plotPoint(x, y, r, g, b, a)
 		end
 	end
 end
--- Through the public Begin/EndPoints because they bracket a run on EVERY band: a
--- band holding none of the figure still needs its run closed.
 function PR.Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)
 	if not PR.IsReady then return end
 	PR.Draw.BeginPoints()
@@ -335,7 +299,6 @@ function PR.Draw.Text(x, y, text, font, opts)
 	end
 end
 
-local canvasRef
 local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, offY, pixelated, workerCount)
 	for i = 1, #workers do
 		workers[i].actor:Destroy()
@@ -346,8 +309,6 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 		end
 	end
 	table.clear(workers)
-	-- Drop the replaced layout's streams; a key nothing reads any more still
-	-- holds a frame in the shared table.
 	for i = 1, nBands do ST["c" .. i] = nil end
 	table.clear(bands)
 	nBands = 0
@@ -371,8 +332,6 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 			local bh = min(tileH, targetH - by)
 			if bw > 0 and bh > 0 then
 				local a = template:Clone()
-				-- Its own stream, and the canvas rectangle that decides what goes into
-				-- it. The index is what the worker reads its stream back by.
 				nBands += 1
 				bands[nBands] = { x0 = bx, y0 = by, x1 = bx + bw - 1, y1 = by + bh - 1,
 					cb = CommandBuffer.new() }
@@ -398,7 +357,6 @@ local rebuild
 
 function PR.System.Init(canvasFrame, config)
 	config = config or {}
-	canvasRef = canvasFrame
 
 	local res = config.Resolution
 	cfgFixed = (typeof(res) == "Vector2" and res.X >= 1 and res.Y >= 1) and res or nil
@@ -446,7 +404,6 @@ function PR.System.Init(canvasFrame, config)
 			lastReady = rdy
 			rebroadcastAll()
 		end
-		-- Full-surface state, so every band gets both.
 		if (PR._tintA or 0) > 0 then
 			for i = 1, nBands do bands[i].cb:tint(PR._tintR, PR._tintG, PR._tintB, PR._tintA) end
 		end
@@ -454,8 +411,6 @@ function PR.System.Init(canvasFrame, config)
 			for i = 1, nBands do bands[i].cb:tint(0, 0, 0, PR._fadeA) end
 		end
 		if PR._overlay then
-		-- Overlays are screen space: the camera is zeroed while recording.
-		-- Errors are reported once; this runs every frame.
 			local ocx, ocy = PR.Camera.X, PR.Camera.Y
 			PR.Camera.X, PR.Camera.Y = 0, 0
 			local ok, err = pcall(PR._overlay)
@@ -467,30 +422,26 @@ function PR.System.Init(canvasFrame, config)
 		end
 		ST.camX = 0
 		ST.camY = 0
-		-- Streams publish BEFORE the frame id moves; a worker only reads on an
-		-- id change, so it can never pick up half a frame.
 		for i = 1, nBands do
 			ST["c" .. i] = bands[i].cb:serialize()
 		end
 	end
 
-	-- The step counter openFrame keys on, off the same event scenes record with.
 	if stepConn then stepConn:Disconnect() end
 	stepConn = RunService.RenderStepped:Connect(function()
 		stepId += 1
 	end)
-	-- BindToRenderStep returns nothing: unbind by name, or a second Init throws.
 	if presentBound then RunService:UnbindFromRenderStep("Ro2DParallelPresent") end
 	presentBound = true
 	RunService:BindToRenderStep("Ro2DParallelPresent", Enum.RenderPriority.Last.Value + 1, function()
 		if not PR.IsReady then return end
-		-- See System.SkipFrame: nothing decoded, nothing uploaded.
 		if PR._skip then
 			PR._skip = false
 			for i = 1, nBands do bands[i].cb:reset() end
 			return
 		end
 		presenting = true
+		presentingAt = stepId
 		local ok, err = pcall(presentFrame)
 		for i = 1, nBands do bands[i].cb:reset() end
 		presenting = false
@@ -536,9 +487,6 @@ end
 function PR.System.SetBackground()
 	return false
 end
--- Declares this frame identical to the one on screen: the canvas is
--- persistent, so nothing is decoded or uploaded. Called INSTEAD of drawing --
--- recorded commands are discarded, not deferred. One frame only.
 function PR.System.SkipFrame()
 	PR._skip = true
 end

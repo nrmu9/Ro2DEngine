@@ -17,12 +17,13 @@ local OP = {
 	TEXT = 6,
 	TINT = 7,
 	CLIP = 8,
-	-- Many small axis-aligned squares in ONE command. See `beginPoints`.
 	POINTS = 9,
 }
 CommandBuffer.OP = OP
 
 local INITIAL = 262144
+local MAX_CAP = INITIAL * 64
+local overflowWarned = false
 
 function CommandBuffer.new()
 	local self = setmetatable({
@@ -42,6 +43,18 @@ end
 function CommandBuffer:_need(extra: number)
 	local want = self.cur + extra
 	if want <= self.cap then return end
+	if want > MAX_CAP then
+		if not overflowWarned then
+			overflowWarned = true
+			warn(("[Ro2D] command buffer overflow: %d bytes recorded in one frame, frame dropped")
+				:format(self.cur))
+		end
+		self.cur = 0
+		self.ptsAt = nil
+		self.ptsN = 0
+		if extra <= self.cap then return end
+		want = extra
+	end
 	local cap = self.cap
 	while cap < want do cap *= 2 end
 	local nb = buffer.create(cap)
@@ -65,8 +78,6 @@ function CommandBuffer:tint(r, g, b, a)
 	self.cur = c + 5
 end
 
--- Scissor state, screen space, inclusive. In-stream so it applies from this
--- point in the frame, not to the whole frame.
 function CommandBuffer:clip(x0, y0, x1, y1)
 	self:_need(17)
 	local buf, c = self.buf, self.cur
@@ -84,16 +95,10 @@ function CommandBuffer:rect(x, y, w, h, r, g, b, a)
 	self.cur = c + 21
 end
 
--- Many small axis-aligned squares under ONE op: 13 bytes and no dispatch per
--- square, against 21 bytes and one dispatch per worker as RECTs. `size` is
--- whole pixels (the extent floors); the position stays f32 so particles do
--- not jitter against a fractional camera offset.
 function CommandBuffer:beginPoints()
 	self:_need(3)
 	local c = self.cur
 	wu8(self.buf, c, OP.POINTS)
-	-- Patched by `endPoints`. Kept as an offset rather than a pointer because
-	-- `_need` may reallocate the buffer under us between here and there.
 	wu16(self.buf, c + 1, 0)
 	self.ptsAt, self.ptsN = c, 0
 	self.cur = c + 3
@@ -101,8 +106,6 @@ end
 
 function CommandBuffer:point(x, y, size, r, g, b, a)
 	if self.ptsAt == nil then return end
-	-- The count is a u16. A run that reaches the ceiling is closed and a new one
-	-- opened, so a caller never has to know there is a ceiling.
 	if self.ptsN >= 65535 then
 		self:endPoints()
 		self:beginPoints()
@@ -177,7 +180,6 @@ end
 function CommandBuffer.decode(bytes: string, h)
 	local buf = buffer.fromstring(bytes)
 	local len = buffer.len(buf)
-	-- Handlers bound once per stream, not looked up per command.
 	local fClear, fTint, fClip = h.clear, h.tint, h.setClip
 	local fRect, fRectRot, fPoints = h.rect, h.rectRot, h.points
 	local fSprite, fSpriteEx, fText = h.sprite, h.spriteEx, h.text
@@ -213,8 +215,6 @@ function CommandBuffer.decode(bytes: string, h)
 				f % 2 == 1, f >= 2)
 			c += 24
 		elseif op == OP.POINTS then
-			-- Handed the buffer and a range; the rasteriser walks it with its
-			-- state hoisted.
 			local n = ru16(buf, c + 1)
 			fPoints(h, buf, c + 3, n)
 			c += 3 + n * 13
