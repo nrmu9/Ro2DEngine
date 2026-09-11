@@ -1,16 +1,10 @@
 --!optimize 2
 --!native
 
--- The two signed-distance shapes as geometry alone, shared by both backends
--- through `plot`. Coordinates are WORLD, for the shape and for `plot`; the
--- camera is the renderer's business.
-
 local floor, min, max, sqrt, clamp = math.floor, math.min, math.max, math.sqrt, math.clamp
 
 local Shapes = {}
 
--- A thick line with a soft edge, plotted as a distance field: every pixel within
--- half the thickness is solid, and the last pixel of the falloff fades.
 function Shapes.line(plot, x0: number, y0: number, x1: number, y1: number,
 	thickness: number, r: number, g: number, b: number)
 	local halfThick = thickness * 0.5
@@ -39,8 +33,6 @@ function Shapes.line(plot, x0: number, y0: number, x1: number, y1: number,
 	end
 end
 
--- A filled disc whose rim fades over the last pixel, so it reads as round rather
--- than as a staircase.
 function Shapes.circle(plot, cx: number, cy: number, radius: number,
 	r: number, g: number, b: number, a: number?)
 	if radius <= 0 then return end

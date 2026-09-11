@@ -114,7 +114,8 @@ export type Ro2DAPI = {
 	System: {
 		Init: (canvasFrame: GuiObject, config: EngineConfig?) -> (),
 		ScreenToCanvas: (screenX: number, screenY: number) -> (number, number),
-		SetBackground: (callback: () -> ()) -> (),
+		SetBackground: (callback: (() -> ())?) -> boolean,
+		BackgroundHeld: () -> boolean,
 		SetImmediateMode: (on: boolean) -> (),
 		SkipFrame: () -> (),
 		SetTint: (r: number, g: number, b: number, alpha: number) -> (),

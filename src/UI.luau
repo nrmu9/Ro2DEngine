@@ -35,7 +35,6 @@ end
 
 function UI.Init(parentLayer: Frame, screenW: number, screenH: number, displayScale: number, baseOffsetX: number, baseOffsetY: number)
 	UI.IsReady = false
-	-- The surfaces, which destroying the layer that shows them does not release.
 	for i = 1, #UI.ChunkList do
 		local img = UI.ChunkList[i].Image
 		if img then img:Destroy() end

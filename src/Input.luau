@@ -8,8 +8,6 @@ local MB1 = Enum.UserInputType.MouseButton1
 local MB2 = Enum.UserInputType.MouseButton2
 local WHEEL = Enum.UserInputType.MouseWheel
 local TOUCH = Enum.UserInputType.Touch
--- Every pad Roblox can report: a controller does not have to enumerate as
--- Gamepad1.
 local PADS = {}
 for i = 1, 8 do
 	local t = Enum.UserInputType["Gamepad" .. i]
@@ -39,8 +37,6 @@ local prevShow = false
 local lastClock = os.clock()
 local GAMEPAD_SPEED = 1100
 
--- Which pad is in hand. Navigation gamepads first, because that is the one
--- Roblox itself routes UI input to.
 local activePad = nil
 local function firstPad()
 	local ok, pads = pcall(function() return UserInputService:GetNavigationGamepads() end)
@@ -50,8 +46,6 @@ local function firstPad()
 	return nil
 end
 
--- How far a stick has to be off centre to count as being used, and how often the
--- full pad list is re-read rather than just the one in hand.
 local PAD_DEADZONE_SQ = 0.15 * 0.15
 local PAD_RESCAN = 0.25
 local rescanAt = 0
@@ -65,9 +59,6 @@ local function stickOf(pad): (number, number)
 	return 0, 0
 end
 
--- Polled, not event-driven: LastInputTypeChanged does not fire for a stick
--- push on some devices, so whichever pad is deflected IS the pad in hand.
--- Only ever turns the flag ON; a mouse or keyboard turns it off.
 local function pollPads(now: number)
 	if activePad then
 		local sx, sy = stickOf(activePad)
@@ -76,7 +67,6 @@ local function pollPads(now: number)
 			return
 		end
 	end
-	-- Scanning the rest costs a state read per pad, so not every frame.
 	if activePad and now < rescanAt then return end
 	rescanAt = now + PAD_RESCAN
 	local ok, pads = pcall(function() return UserInputService:GetConnectedGamepads() end)
@@ -95,7 +85,6 @@ local function pollPads(now: number)
 end
 
 local function readStick()
-	-- Re-picked while none is known: the pad list can be empty at load.
 	if not activePad then activePad = firstPad() end
 	if not activePad then return 0, 0 end
 	local ok, states = pcall(function() return UserInputService:GetGamepadState(activePad) end)
@@ -146,7 +135,6 @@ end
 
 UserInputService.LastInputTypeChanged:Connect(function(t)
 	if PADS[t] then
-		-- Whatever they just used IS the pad, whichever slot it enumerated in.
 		activePad = t
 		Input.GamepadActive = true
 		if not padInit then centerCursor() end
@@ -158,7 +146,6 @@ end)
 UserInputService.GamepadConnected:Connect(function(gamepad)
 	activePad = (gamepad ~= nil and PADS[gamepad] and gamepad) or firstPad()
 end)
--- Re-pick rather than clear: unplugging one of two pads leaves the other.
 UserInputService.GamepadDisconnected:Connect(function()
 	activePad = firstPad()
 end)
@@ -166,8 +153,6 @@ end)
 local touches = {}
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	-- A press is proof of which pad is in hand, and the cheapest correction there
-	-- is for a controller that enumerated somewhere unexpected.
 	if PADS[input.UserInputType] then activePad = input.UserInputType end
 	if input.KeyCode == BUTTON_A then Input.PadDown = true end
 	if gameProcessed then return end

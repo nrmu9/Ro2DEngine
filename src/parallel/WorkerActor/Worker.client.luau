@@ -20,8 +20,6 @@ local function A(name)
 	end
 	return v
 end
--- This worker's own stream key. Each band is handed only the commands that touch
--- it, rather than every worker walking the whole scene -- see ParallelRenderer.
 local BAND_I = A("BandIndex")
 local CMD_KEY = "c" .. BAND_I
 local BAND_X, BAND_Y = A("BandX"), A("BandY")
@@ -31,8 +29,6 @@ local OFF_X, OFF_Y = A("OffsetX"), A("OffsetY")
 local PIXELATED = A("Pixelated") == 1
 
 local imgSize = Vector2.new(BAND_W, BAND_H)
--- EditableImage can be unavailable, or the availability check can fail; say
--- so once and stop.
 local imgOk, image = pcall(function()
 	return AssetService:CreateEditableImage({ Size = imgSize })
 end)
@@ -54,9 +50,46 @@ frame.ResampleMode = PIXELATED and Enum.ResamplerMode.Pixelated or Enum.Resample
 frame.ImageContent = Content.fromObject(image)
 frame.Parent = actor.Parent
 
-local buf = buffer.create(BAND_W * BAND_H * 4)
+local BAND_BYTES = BAND_W * BAND_H * 4
+local buf = buffer.create(BAND_BYTES)
 local sprites, fonts = {}, {}
 local rz = Rasterizer.new(buf, BAND_W, BAND_H, sprites, fonts)
+local bg = nil
+local held = false
+local whole = true
+local lx0, ly0, lx1, ly1 = BAND_W, BAND_H, -1, -1
+
+function rz.background(self, keep)
+	if keep then
+		if bg == nil then bg = buffer.create(BAND_BYTES) end
+		buffer.copy(bg, 0, buf, 0, BAND_BYTES)
+	end
+	held = keep
+	whole = true
+	self:resetDirty()
+end
+
+local scratch = {}
+local nScratch = 0
+local function scratchOf(w, h)
+	local key = w * 65536 + h
+	local s = scratch[key]
+	if s == nil then
+		if nScratch >= 8 then
+			table.clear(scratch)
+			nScratch = 0
+		end
+		s = buffer.create(w * h * 4)
+		scratch[key] = s
+		nScratch += 1
+	end
+	return s
+end
+local function roundUp(n, cap)
+	local p = 1
+	while p < n do p *= 2 end
+	return p < cap and p or cap
+end
 
 actor:BindToMessage("sprite", function(id, bytes, sw, sh)
 	sprites[id] = { Width = sw, Height = sh, Buffer = buffer.fromstring(bytes) }
@@ -67,14 +100,7 @@ end)
 
 local ST = SharedTableRegistry:GetSharedTable("Ro2D_Frame")
 local lastFrame = -1
-
--- The write can start failing mid-session and runs per worker per frame;
--- reported once.
 local writeWarned = false
-
--- A worker stops itself when it leaves the tree: a callback already
--- scheduled for the frame still runs, and task.synchronize outside an Actor
--- throws. Destroying and AncestryChanged answer different endings.
 local alive = true
 local frameConn
 local function stop()
@@ -84,8 +110,6 @@ local function stop()
 		frameConn:Disconnect()
 		frameConn = nil
 	end
-	-- The band is not parented to anything, so destroying the actor does not take
-	-- it with us.
 	if image then
 		image:Destroy()
 		image = nil
@@ -97,8 +121,6 @@ actor.AncestryChanged:Connect(function(_, parent)
 end)
 
 frameConn = RunService.RenderStepped:ConnectParallel(function()
-	-- Before the synchronize: the destroy happens serially, so a callback
-	-- past this check is safe for the rest of its run.
 	if not alive then return end
 	local fid = ST.frame
 	if fid == nil or fid == lastFrame then
@@ -109,18 +131,52 @@ frameConn = RunService.RenderStepped:ConnectParallel(function()
 		return
 	end
 	lastFrame = fid
+	if held and not ST.keep then held = false end
+	if held then
+		if lx0 <= lx1 then
+			local rowBytes = (lx1 - lx0 + 1) * 4
+			for row = ly0, ly1 do
+				local o = (row * BAND_W + lx0) * 4
+				buffer.copy(buf, o, bg, o, rowBytes)
+			end
+		end
+		whole = false
+	else
+		whole = true
+	end
+	rz:resetDirty()
 	rz:setOffset(ST.camX + BAND_X, ST.camY + BAND_Y)
-	-- Scissor state is per frame: a stream that sets a clip and never clears it
-	-- must not leak into the next frame.
 	rz:resetClip()
 	CommandBuffer.decode(bytes, rz)
+	local ux, uy, uw, uh = 0, 0, BAND_W, BAND_H
+	if not whole then
+		local x0, y0 = math.min(lx0, rz.dx0), math.min(ly0, rz.dy0)
+		local x1, y1 = math.max(lx1, rz.dx1), math.max(ly1, rz.dy1)
+		lx0, ly0, lx1, ly1 = rz.dx0, rz.dy0, rz.dx1, rz.dy1
+		if x0 > x1 or y0 > y1 then return end
+		uw, uh = roundUp(x1 - x0 + 1, BAND_W), roundUp(y1 - y0 + 1, BAND_H)
+		ux = x0 + uw > BAND_W and BAND_W - uw or x0
+		uy = y0 + uh > BAND_H and BAND_H - uh or y0
+	else
+		lx0, ly0, lx1, ly1 = rz.dx0, rz.dy0, rz.dx1, rz.dy1
+	end
+	local src = buf
+	if uw ~= BAND_W or uh ~= BAND_H then
+		src = scratchOf(uw, uh)
+		local rowBytes = uw * 4
+		for row = 0, uh - 1 do
+			buffer.copy(src, row * rowBytes, buf, ((uy + row) * BAND_W + ux) * 4, rowBytes)
+		end
+	end
 	task.synchronize()
-	local ok, err = pcall(image.WritePixelsBuffer, image, Vector2.zero, imgSize, buf)
+	local ok, err
+	if src == buf then
+		ok, err = pcall(image.WritePixelsBuffer, image, Vector2.zero, imgSize, buf)
+	else
+		ok, err = pcall(image.WritePixelsBuffer, image, Vector2.new(ux, uy), Vector2.new(uw, uh), src)
+	end
 	if not ok and not writeWarned then
 		writeWarned = true
-		-- Once for the CANVAS, not per worker: a failure is all of them
-		-- failing on the same cause. The local flag quiets this worker, the
-		-- shared one its neighbours.
 		local first = false
 		SharedTable.update(ST, "writeWarned", function(v)
 			first = v == nil

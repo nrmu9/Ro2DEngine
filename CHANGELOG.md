@@ -4,6 +4,26 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-11
+
+### Added
+- `System.SetBackground` on the threaded backend, where it answered `false`
+  and did nothing. A screen whose backdrop had stopped changing still had it
+  recorded, rasterised and uploaded whole by every worker, every frame, for
+  one small thing to move over it. The canvas as painted so far (plus the
+  callback's draws) is now kept as the background: later frames draw only
+  what moves, each worker restores what the last frame painted over it and
+  uploads only the box that changed, and a band nothing moved in uploads
+  nothing. A frame that takes or drops the background is never skipped.
+- `System.BackgroundHeld()`, on both backends: false once a rebuild, a
+  dropped frame or `SetBackground(nil)` has let the background go, so a scene
+  drawing only its moving part knows to paint whole again.
+
+### Changed
+- `SetBackground` answers `true` when it took (or dropped) the background and
+  `false` when the canvas is not ready, on both backends.
+- Comments across `src` trimmed further.
+
 ## [0.5.7] - 2026-09-06
 
 ### Fixed
@@ -403,6 +423,11 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.6.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.6.0
+[0.5.7]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.7
+[0.5.6]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.6
+[0.5.5]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.5
+[0.5.4]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.4
 [0.5.3]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.3
 [0.5.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.2
 [0.5.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.1

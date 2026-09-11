@@ -60,6 +60,7 @@ local FillMode = false
 local SkipRestore = false
 local UploadBufferPool = {}
 local DeveloperBackgroundCode = nil
+local BackgroundHeld = false
 
 
 local function fillU32(buf: buffer, start: number, count: number, packed: number)
@@ -74,8 +75,6 @@ local function fillU32(buf: buffer, start: number, count: number, packed: number
 end
 
 local function clearMemory()
-	-- An EditableImage is charged against a budget the whole experience shares and
-	-- is not released by destroying the label that shows it.
 	for i = 1, #ChunkList do
 		local img = ChunkList[i].Image
 		if img then img:Destroy() end
@@ -88,6 +87,7 @@ local function clearMemory()
 	table.clear(ChunkUIElements)
 	Renderer.Grid.Width = 0
 	Renderer.Grid.Height = 0
+	BackgroundHeld = false
 end
 
 local function rebuildGrid()
@@ -152,7 +152,6 @@ local function rebuildGrid()
 			frame.Parent = CanvasFrame
 			table.insert(ChunkUIElements, frame)
 
-			-- Answers nil when the shared budget is spent.
 			local imgOk, image = pcall(AssetService.CreateEditableImage, AssetService,
 				{ Size = Vector2_new(chunkW, chunkH) })
 			if not imgOk or image == nil then
@@ -163,7 +162,6 @@ local function rebuildGrid()
 			end
 
 			local bytes = chunkW * chunkH * 4
-			-- Per-chunk buffers under their own name in the Developer Console.
 			debug.setmemorycategory("Ro2D/Canvas")
 			local chunk: Chunk = {
 				Image = image,
@@ -272,8 +270,6 @@ function Renderer.System.ScreenToCanvas(screenX: number, screenY: number): (numb
 	return floor((screenX - g.OffsetX) * inv), floor((screenY - g.OffsetY) * inv)
 end
 
--- Declares this frame identical to the one on screen. Earns its keep on the
--- parallel renderer; exists on both so scenes never ask which backend runs.
 local skipFrame = false
 function Renderer.System.SkipFrame()
 	skipFrame = true
@@ -283,10 +279,7 @@ function Renderer.System.SetImmediateMode(on: boolean)
 	SkipRestore = on and true or false
 end
 
-function Renderer.System.SetBackground(callback)
-	DeveloperBackgroundCode = callback
-	if not callback or not Renderer.Grid.IsReady then return end
-
+local function takeBackground(callback)
 	callback()
 
 	for i = 1, #ChunkList do
@@ -304,13 +297,26 @@ function Renderer.System.SetBackground(callback)
 	end
 end
 
+function Renderer.System.SetBackground(callback)
+	DeveloperBackgroundCode = callback
+	BackgroundHeld = false
+	if not callback then return true end
+	if not Renderer.Grid.IsReady then return false end
+	takeBackground(callback)
+	BackgroundHeld = true
+	return true
+end
+
+function Renderer.System.BackgroundHeld()
+	return BackgroundHeld
+end
+
 local Draw = Renderer.Draw
 local Grid = Renderer.Grid
 local Camera = Renderer.Camera
 
 local EMPTY_OPTS = table.freeze({})
 
--- Scissor bounds, screen space, inclusive; free when unset.
 local clipX0, clipY0, clipX1, clipY1 = 0, 0, -1, -1
 local function resetClip()
 	clipX0, clipY0 = 0, 0
@@ -318,8 +324,6 @@ local function resetClip()
 end
 Renderer.ResetClip = resetClip
 
--- World-space clip rectangle. Zero or negative size clips everything away;
--- self-clears at the end of every frame.
 function Draw.SetClip(worldX: number, worldY: number, w: number, h: number)
 	if not Grid.IsReady then return end
 	if w <= 0 or h <= 0 then
@@ -781,13 +785,9 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 	end
 end
 
--- The batched-points API, which here is simply Rect; the brackets exist so
--- callers never ask which backend they are talking to.
 function Draw.BeginPoints() end
 function Draw.EndPoints() end
 function Draw.Point(worldX: number, worldY: number, size: number, r: number, g: number, b: number, a: number?)
-	-- Offset by the floored side actually drawn, or every particle sits a
-	-- fraction of a pixel off centre in one direction.
 	local s = floor(size)
 	if s > 0 then
 		Draw.Rect(worldX - s * 0.5, worldY - s * 0.5, s, s, r, g, b, a)
@@ -886,8 +886,6 @@ function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, 
 	end
 end
 
--- Both shapes are geometry only, and the geometry lives in Shapes so the threaded
--- backend cannot draw a different circle. All this adds is where the pixels go.
 function Draw.LineSDF(worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number)
 	if not Grid.IsReady then return end
 	Shapes.line(Draw.Pixel, worldX0, worldY0, worldX1, worldY1, thickness, r, g, b)
@@ -910,7 +908,6 @@ function Draw.Clear(r: number, g: number, b: number, a: number?)
 end
 
 local overlayFn = nil
--- One report per session for a failing overlay: it runs every frame.
 local overlayWarned = false
 function Renderer.System.SetOverlay(fn) overlayFn = fn end
 
@@ -930,11 +927,10 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 
 	if not wasReady then
 		wasReady = true
-		if DeveloperBackgroundCode then Renderer.System.SetBackground(DeveloperBackgroundCode) end
+		if DeveloperBackgroundCode then takeBackground(DeveloperBackgroundCode) end
 	end
 
 	if overlayFn then
-		-- Overlays are screen space: the camera is zeroed for the duration.
 		local ocx, ocy = Camera.X, Camera.Y
 		Camera.X, Camera.Y = 0, 0
 		local ok, err = pcall(overlayFn)
@@ -944,8 +940,6 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 			warn("[Ro2D] overlay error, further errors suppressed: " .. tostring(err))
 		end
 	end
-	-- End of frame: scissor state is per frame, so the next one starts unclipped
-	-- even if a scene set a clip and never cleared it.
 	resetClip()
 
 	for i = 1, #ChunkList do

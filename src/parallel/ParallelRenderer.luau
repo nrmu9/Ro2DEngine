@@ -85,10 +85,12 @@ end
 local stepId, openedAt = 0, -1
 local presenting = false
 local presentingAt = -1
+local bgHeld, bgAtOpen, bgTouched = false, false, false
 local function openFrame()
 	if presenting and stepId - presentingAt < 2 then return end
 	if openedAt == stepId then return end
 	openedAt = stepId
+	bgAtOpen = bgHeld
 	for i = 1, nBands do bands[i].cb:reset() end
 end
 
@@ -310,6 +312,7 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 	end
 	table.clear(workers)
 	for i = 1, nBands do ST["c" .. i] = nil end
+	bgHeld, bgAtOpen = false, false
 	table.clear(bands)
 	nBands = 0
 	table.clear(spriteReg)
@@ -422,6 +425,11 @@ function PR.System.Init(canvasFrame, config)
 		end
 		ST.camX = 0
 		ST.camY = 0
+		if openedAt == stepId then
+			ST.keep = bgAtOpen
+		else
+			ST.keep = bgHeld
+		end
 		for i = 1, nBands do
 			ST["c" .. i] = bands[i].cb:serialize()
 		end
@@ -435,11 +443,12 @@ function PR.System.Init(canvasFrame, config)
 	presentBound = true
 	RunService:BindToRenderStep("Ro2DParallelPresent", Enum.RenderPriority.Last.Value + 1, function()
 		if not PR.IsReady then return end
-		if PR._skip then
+		if PR._skip and not bgTouched then
 			PR._skip = false
 			for i = 1, nBands do bands[i].cb:reset() end
 			return
 		end
+		PR._skip = false
 		presenting = true
 		presentingAt = stepId
 		local ok, err = pcall(presentFrame)
@@ -448,10 +457,14 @@ function PR.System.Init(canvasFrame, config)
 		if ok then
 			frameId += 1
 			ST.frame = frameId
-		elseif not presentWarned then
-			presentWarned = true
-			warn("[Ro2D] frame dropped, further drops suppressed: " .. tostring(err))
+		else
+			if bgTouched then bgHeld = false end
+			if not presentWarned then
+				presentWarned = true
+				warn("[Ro2D] frame dropped, further drops suppressed: " .. tostring(err))
+			end
 		end
+		bgTouched = false
 	end)
 end
 
@@ -484,8 +497,19 @@ end
 function PR.System.SetFade(a)
 	PR._fadeA = max(0, min(255, floor(a or 0)))
 end
-function PR.System.SetBackground()
-	return false
+function PR.System.SetBackground(callback)
+	if not PR.IsReady then
+		if callback == nil then bgHeld = false end
+		return false
+	end
+	openFrame()
+	if callback then callback() end
+	for i = 1, nBands do bands[i].cb:background(callback ~= nil) end
+	bgHeld, bgTouched = callback ~= nil, true
+	return true
+end
+function PR.System.BackgroundHeld()
+	return bgHeld
 end
 function PR.System.SkipFrame()
 	PR._skip = true

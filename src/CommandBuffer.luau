@@ -18,6 +18,7 @@ local OP = {
 	TINT = 7,
 	CLIP = 8,
 	POINTS = 9,
+	BACKGROUND = 10,
 }
 CommandBuffer.OP = OP
 
@@ -76,6 +77,14 @@ function CommandBuffer:tint(r, g, b, a)
 	wu8(buf, c, OP.TINT)
 	wu8(buf, c + 1, r); wu8(buf, c + 2, g); wu8(buf, c + 3, b); wu8(buf, c + 4, a)
 	self.cur = c + 5
+end
+
+function CommandBuffer:background(keep)
+	self:_need(2)
+	local buf, c = self.buf, self.cur
+	wu8(buf, c, OP.BACKGROUND)
+	wu8(buf, c + 1, keep and 1 or 0)
+	self.cur = c + 2
 end
 
 function CommandBuffer:clip(x0, y0, x1, y1)
@@ -183,6 +192,7 @@ function CommandBuffer.decode(bytes: string, h)
 	local fClear, fTint, fClip = h.clear, h.tint, h.setClip
 	local fRect, fRectRot, fPoints = h.rect, h.rectRot, h.points
 	local fSprite, fSpriteEx, fText = h.sprite, h.spriteEx, h.text
+	local fBackground = h.background
 	local c = 0
 	while c < len do
 		local op = ru8(buf, c)
@@ -224,6 +234,9 @@ function CommandBuffer.decode(bytes: string, h)
 				ru16(buf, c + 9), rf32(buf, c + 11),
 				ru8(buf, c + 15), ru8(buf, c + 16), ru8(buf, c + 17), ru8(buf, c + 18))
 			c += 21 + n
+		elseif op == OP.BACKGROUND then
+			if fBackground then fBackground(h, ru8(buf, c + 1) == 1) end
+			c += 2
 		else
 			break
 		end

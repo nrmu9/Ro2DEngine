@@ -8,8 +8,6 @@ local floor, abs, min, max = math.floor, math.abs, math.min, math.max
 local ceil = math.ceil
 local cos, sin = math.cos, math.sin
 local HUGE = math.huge
--- Below this the axis is treated as exactly zero, so a near-axis-aligned rect
--- divides by a sane number instead of producing an enormous span.
 local EPS = 1e-9
 
 local Rasterizer = {}
@@ -19,19 +17,28 @@ function Rasterizer.new(buf: buffer, bufW: number, bufH: number, sprites, fonts)
 	return setmetatable({
 		buf = buf, w = bufW, h = bufH,
 		ox = 0, oy = 0,
-		-- Inclusive band-local scissor; free when unset.
 		cx0 = 0, cy0 = 0, cx1 = bufW - 1, cy1 = bufH - 1,
+		dx0 = bufW, dy0 = bufH, dx1 = -1, dy1 = -1,
 		sprites = sprites or {},
 		fonts = fonts or {},
 	}, Rasterizer)
+end
+
+function Rasterizer:resetDirty()
+	self.dx0, self.dy0, self.dx1, self.dy1 = self.w, self.h, -1, -1
+end
+
+local function mark(self, x0: number, y0: number, x1: number, y1: number)
+	if x0 < self.dx0 then self.dx0 = x0 end
+	if y0 < self.dy0 then self.dy0 = y0 end
+	if x1 > self.dx1 then self.dx1 = x1 end
+	if y1 > self.dy1 then self.dy1 = y1 end
 end
 
 function Rasterizer:setOffset(ox: number, oy: number)
 	self.ox, self.oy = ox, oy
 end
 
--- Screen-space, inclusive. Intersected with this worker's band, so a clip that
--- misses the band entirely leaves it with nothing to draw.
 function Rasterizer:setClip(x0: number, y0: number, x1: number, y1: number)
 	local lx0 = floor(x0 - self.ox)
 	local ly0 = floor(y0 - self.oy)
@@ -51,6 +58,7 @@ end
 function Rasterizer:clear(r, g, b, a)
 	local packed = r + g * 256 + b * 65536 + (a or 255) * 16777216
 	local buf, n = self.buf, self.w * self.h
+	mark(self, 0, 0, self.w - 1, self.h - 1)
 	writeu32(buf, 0, packed)
 	local filled = 1
 	while filled < n do
@@ -63,6 +71,7 @@ end
 function Rasterizer:tint(r, g, b, a)
 	if a <= 0 then return end
 	local buf, n = self.buf, self.w * self.h
+	mark(self, 0, 0, self.w - 1, self.h - 1)
 	local ia = 255 - a
 	local ar, ag, ab = r * a, g * a, b * a
 	local off = 0
@@ -90,6 +99,7 @@ function Rasterizer:rect(x, y, w, h, r, g, b, a)
 	if y0 < cy0 then y0 = cy0 end
 	if x1 > cx1 then x1 = cx1 end
 	if y1 > cy1 then y1 = cy1 end
+	mark(self, x0, y0, x1, y1)
 	local aa = a or 255
 	if aa >= 255 then
 		local packed = r + g * 256 + b * 65536 + 0xFF000000
@@ -117,32 +127,26 @@ function Rasterizer:rect(x, y, w, h, r, g, b, a)
 	end
 end
 
--- A packed run of small axis-aligned squares, walked in one pass.
---
--- Same pixels a RECT each would have produced. What it saves is everything
--- around them: one op instead of thousands, one dispatch instead of thousands,
--- and the buffer, the band width and the scissor read once for the whole run
--- rather than once per square. See CommandBuffer.beginPoints for why that is the
--- expensive part of a particle field rather than the filling.
---
--- Records are 13 bytes: x and y as f32, then side, r, g, b and a as u8.
 function Rasterizer:points(src: buffer, off: number, n: number)
 	local bw, buf = self.w, self.buf
 	local ox, oy = self.ox, self.oy
 	local cx0, cy0, cx1, cy1 = self.cx0, self.cy0, self.cx1, self.cy1
+	local dx0, dy0, dx1, dy1 = self.dx0, self.dy0, self.dx1, self.dy1
 	for _ = 1, n do
 		local s = readu8(src, off + 8)
 		if s > 0 then
 			local x0 = floor(readf32(src, off) - ox)
 			local y0 = floor(readf32(src, off + 4) - oy)
 			local x1, y1 = x0 + s - 1, y0 + s - 1
-			-- Almost every square in a field is outside any one worker's band, so
-			-- this rejection is the hot path and is kept to four comparisons.
 			if x1 >= cx0 and y1 >= cy0 and x0 <= cx1 and y0 <= cy1 then
 				if x0 < cx0 then x0 = cx0 end
 				if y0 < cy0 then y0 = cy0 end
 				if x1 > cx1 then x1 = cx1 end
 				if y1 > cy1 then y1 = cy1 end
+				if x0 < dx0 then dx0 = x0 end
+				if y0 < dy0 then dy0 = y0 end
+				if x1 > dx1 then dx1 = x1 end
+				if y1 > dy1 then dy1 = y1 end
 				local a = readu8(src, off + 12)
 				local r = readu8(src, off + 9)
 				local g = readu8(src, off + 10)
@@ -176,6 +180,7 @@ function Rasterizer:points(src: buffer, off: number, n: number)
 		end
 		off += 13
 	end
+	self.dx0, self.dy0, self.dx1, self.dy1 = dx0, dy0, dx1, dy1
 end
 
 function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
@@ -198,6 +203,7 @@ function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
 		if minY < cy0b then minY = cy0b end
 		if maxX > cx1b then maxX = cx1b end
 		if maxY > cy1b then maxY = cy1b end
+		mark(self, minX, minY, maxX, maxY)
 		for py = minY, maxY do
 			local off = (py * bw + minX) * 4
 			for _ = minX, maxX do
@@ -227,23 +233,19 @@ function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
 	if minY < cy0b then minY = cy0b end
 	if maxX > cx1b then maxX = cx1b end
 	if maxY > cy1b then maxY = cy1b end
-	-- Per scanline, the exact x-range the rotated rect covers -- a thin bar at
-	-- 45 degrees has a bounding box hundreds of times its area. Widened a pixel
-	-- each side; the per-pixel test stays, so only the visits narrow.
+	mark(self, minX, minY, maxX, maxY)
 	for py = minY, maxY do
 		local dyc = py - cy
 		local base = py * bw
 		local lo, hi = -HUGE, HUGE
-		-- |lx| <= hw  =>  dxc * ca within these bounds
 		local alo, ahi = -hw - dyc * sa, hw - dyc * sa
 		if ca > EPS then
 			lo, hi = alo / ca, ahi / ca
 		elseif ca < -EPS then
 			lo, hi = ahi / ca, alo / ca
 		elseif alo > 0 or ahi < 0 then
-			continue -- the row misses the slab entirely
+			continue
 		end
-		-- |ly| <= hh  =>  dxc * sa within these
 		local blo, bhi = dyc * ca - hh, dyc * ca + hh
 		if sa > EPS then
 			lo, hi = max(lo, blo / sa), min(hi, bhi / sa)
@@ -295,6 +297,7 @@ function Rasterizer:spriteEx(wx, wy, spriteId, scale, rot, tintR, tintG, tintB, 
 	if minY < cy0b then minY = cy0b end
 	if maxX > cx1b then maxX = cx1b end
 	if maxY > cy1b then maxY = cy1b end
+	mark(self, minX, minY, maxX, maxY)
 	local tinted = tintR ~= 255 or tintG ~= 255 or tintB ~= 255
 	local rot0 = rot == 0
 
@@ -342,7 +345,6 @@ function Rasterizer:spriteEx(wx, wy, spriteId, scale, rot, tintR, tintG, tintB, 
 	end
 end
 
--- Sprite anchors top-left, spriteEx centre: convert, do not forward.
 function Rasterizer:sprite(wx, wy, spriteId, flipX, flipY)
 	local sprite = self.sprites[spriteId]
 	if not sprite then return end
@@ -371,9 +373,6 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 			local ox = floor(penX + g.OX * scale - self.ox)
 			local oy = floor(wy + g.OY * scale - self.oy)
 			local dw, dh = floor(gW * scale), floor(gH * scale)
-			-- Only the part of the glyph inside the clip; a full-glyph walk on
-			-- large or off-screen text blows a worker's resumption budget. The
-			-- ranges are exact, so no per-pixel bounds tests follow.
 			local pxA = cx0b - ox
 			if pxA < 0 then pxA = 0 end
 			local pxB = cx1b - ox
@@ -382,6 +381,9 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 			if pyA < 0 then pyA = 0 end
 			local pyB = cy1b - oy
 			if pyB > dh - 1 then pyB = dh - 1 end
+			if pxA <= pxB and pyA <= pyB then
+				mark(self, ox + pxA, oy + pyA, ox + pxB, oy + pyB)
+			end
 
 			local wIdx = 0
 			for px = pxA, pxB do
@@ -392,7 +394,6 @@ function Rasterizer:text(wx, wy, str, fontId, scale, tr, tg, tb, alpha)
 				local sxB = ceil(fx1) - 1
 				colS[px] = sxA
 				colN[px] = sxB - sxA + 1
-				-- Absolute weight offset; the blit no longer visits every column.
 				colO[px] = wIdx
 				local sx = sxA
 				while sx <= sxB do
