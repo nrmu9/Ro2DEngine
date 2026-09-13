@@ -4,6 +4,34 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-13
+
+### Added
+- `Input.Actions`: named actions over the raw input tables, so a game reads
+  "Fire" or "Cast" rather than a key, and the key can be changed at runtime.
+  `define` takes the game's action table (label, kind `button` or `axis`, a
+  keyboard/mouse binding and a pad binding per action, an optional lock per
+  device, and keys the game keeps for itself); `pressed` consumes one queued
+  press (capped at three per action), `down` reads the held state, `axis` gives
+  a composite of four keys or a stick in screen space (an axis may carry a
+  second keyboard set, `alt`, read but never rebound), `pending` and `flush`
+  serve a screen that skips frames, `fire` lets a script press an action.
+  `rebind` refuses a blocked key, a locked binding and a key another action
+  already answers to on that device; `bindings` returns only what differs from
+  the defaults, `apply` restores such a table, `reset` and `isDefault` round it
+  off. `capture` hands the next key or pad button on a device to a callback and
+  swallows it, cancelled by Escape or Backspace on a keyboard and A on a pad;
+  `keyLabel`, `label` and `keyCodeOf` name a binding for a prompt. The engine
+  keeps no defaults and saves nothing: a game hands the table in and stores what
+  comes back.
+- `Input` tracks the middle mouse button and every held pad button, re-asked
+  against the hardware each frame like the keys, and reads both sticks of the
+  pad in hand.
+
+### Changed
+- `Input` names each key, mouse button and pad button as it goes down and offers
+  it to a capture first; a captured press reaches nothing else.
+
 ## [0.6.0] - 2026-09-11
 
 ### Added

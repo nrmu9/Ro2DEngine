@@ -142,6 +142,47 @@ All `Draw` calls operate in world space (offset by `Ro2D.Camera`). Colors are
 `Assets.LoadSprite` and `Assets.LoadFont` cache their result per `ModuleScript`,
 so requiring the same asset again is free after the first decode.
 
+## Input actions
+
+`Ro2D.Input.Actions` lets a game read input by name and let players change the
+keys. The engine holds no defaults and saves nothing; the game hands in its
+action table and stores the overrides `bindings()` returns wherever it likes.
+
+```lua
+local Actions = Ro2D.Input.Actions
+Actions.define({
+    order = { "Move", "Fire" },
+    actions = {
+        Move = { label = "MOVE", kind = "axis",
+            kbm = { up = "W", down = "S", left = "A", right = "D" },
+            alt = { up = "Up", down = "Down", left = "Left", right = "Right" },
+            pad = "Thumbstick1", lock = { pad = true } },
+        Fire = { label = "SHOOT", kbm = "MouseLeftButton", pad = "ButtonR2" },
+    },
+    blocked = { "Slash" },
+})
+
+-- each frame
+local mx, my = Actions.axis("Move")        -- screen space: +x right, +y down
+if Actions.down("Fire") then keepShooting() end
+if Actions.pressed("Fire") then shoot() end -- consumes one queued press
+
+-- a keybinds screen
+Actions.capture("kbm", function(key)       -- nil when cancelled
+    if key then print(Actions.rebind("Fire", "kbm", key)) end
+end)
+save(Actions.bindings())                   -- only what differs from the defaults
+Actions.apply(load())
+Actions.label("Fire", "kbm")               -- "LMB", for a prompt
+```
+
+An axis action may carry `alt`, a second keyboard set that is read but never
+rebound or saved; a key from it yields to any action it is later bound to.
+
+Keys are strings: `Enum.KeyCode` names, or `MouseLeftButton`,
+`MouseRightButton`, `MouseMiddleButton`. `rebind` refuses a blocked key, a
+locked binding, and a key another action already answers to on that device.
+
 ## UI module
 
 `Ro2D.UI` is a work in progress. It is functional and used in the example

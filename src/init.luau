@@ -162,6 +162,7 @@ export type Ro2DAPI = {
 		GetMousePosition: () -> (number, number),
 		IsMouseDown: (button: number) -> boolean,
 		GetScrollDelta: () -> number,
+		Actions: typeof(Input.Actions),
 	},
 	UI: {
 		Clear: () -> (),
@@ -328,8 +329,10 @@ Ro2D = {
 		IsLocked = function() return inputLocked end,
 		IsGamepadActive = function() return Input.GamepadActive end,
 		SetPointerVisible = function(v) Input.PointerVisible = v ~= false end,
+		Actions = Input.Actions,
 	},
 }
+Input.Actions.lockedBy(function() return inputLocked end)
 
 bindBackend(Renderer)
 
