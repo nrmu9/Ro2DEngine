@@ -24,7 +24,7 @@ jobs:
           echo "$RUNNER_TEMP/rojo" >> "$GITHUB_PATH"
 
       - name: Build model
-        run: rojo build default.project.json --output Ro2DEngine.rbxm
+        run: rojo build model.project.json --output Ro2DEngine.rbxm
 
       - name: Create release
         uses: softprops/action-gh-release@v3.0.2

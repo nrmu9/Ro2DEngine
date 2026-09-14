@@ -23,7 +23,7 @@ jobs:
           echo "$RUNNER_TEMP/rojo" >> "$GITHUB_PATH"
 
       - name: Build model
-        run: rojo build default.project.json --output Ro2DEngine.rbxm
+        run: rojo build model.project.json --output Ro2DEngine.rbxm
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7

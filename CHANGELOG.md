@@ -4,6 +4,13 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-09-14
+
+### Fixed
+- The release model would not open in Studio. It was built from the place
+  project, so its root was the ReplicatedStorage service; it is built from
+  `model.project.json` now, with the engine as its root.
+
 ## [0.7.0] - 2026-09-13
 
 ### Added
