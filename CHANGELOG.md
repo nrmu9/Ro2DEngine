@@ -4,7 +4,7 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.2] - 2026-09-19
 
 ### Fixed
 - Switching to a second controller mid-game broke its input until the first
@@ -477,6 +477,9 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.7.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.7.2
+[0.7.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.7.1
+[0.7.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.7.0
 [0.6.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.6.0
 [0.5.7]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.7
 [0.5.6]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.5.6
