@@ -40,6 +40,7 @@ local frame = Instance.new("ImageLabel")
 frame.Name = string.format("PWorker_%d_%d", BAND_X, BAND_Y)
 frame.BackgroundTransparency = 1
 frame.BorderSizePixel = 0
+frame.ZIndex = BAND_I
 local ex0 = math.round(OFF_X + BAND_X * SCALE)
 local ey0 = math.round(OFF_Y + BAND_Y * SCALE)
 local ex1 = math.round(OFF_X + (BAND_X + BAND_W) * SCALE)

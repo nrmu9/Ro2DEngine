@@ -326,6 +326,7 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 	local rows = max(ceil(targetH / 1024), ceil(workerCount / cols))
 	local tileW = ceil(targetW / cols)
 	local tileH = ceil(targetH / rows)
+	local over = max(1, ceil(1 / max(displayScale, 1e-3)))
 
 	local template = engine:WaitForChild("parallel"):WaitForChild("WorkerActor")
 	for r = 0, rows - 1 do
@@ -334,6 +335,8 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 			local bw = min(tileW, targetW - bx)
 			local bh = min(tileH, targetH - by)
 			if bw > 0 and bh > 0 then
+				bw += min(over, targetW - bx - bw)
+				bh += min(over, targetH - by - bh)
 				local a = template:Clone()
 				nBands += 1
 				bands[nBands] = { x0 = bx, y0 = by, x1 = bx + bw - 1, y1 = by + bh - 1,

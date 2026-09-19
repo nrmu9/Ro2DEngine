@@ -4,6 +4,17 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Thin dark lines along the seams between parallel bands, at some window
+  sizes and on phones. Roblox draws UI at the device's pixel density, which is
+  often fractional, so two band images meeting at a seam each only partly
+  cover the boundary pixel and the canvas behind shows through the blend. Each
+  band now also renders the first row and column of the band after it, at least
+  a whole screen point's worth, and bands stack in order, so a seam always
+  lies over picture.
+
 ## [0.7.1] - 2026-09-14
 
 ### Fixed
