@@ -122,7 +122,7 @@ actor.AncestryChanged:Connect(function(_, parent)
 end)
 
 frameConn = RunService.RenderStepped:ConnectParallel(function()
-	if not alive then return end
+	if not alive or script.Parent ~= actor or actor.Parent == nil then return end
 	local fid = ST.frame
 	if fid == nil or fid == lastFrame then
 		return

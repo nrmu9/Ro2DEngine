@@ -4,6 +4,19 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- A render worker whose band had been rebuilt away could still raise
+  "task.synchronize() may only be called from a script that is a descendant of
+  an Actor". The 0.5.1 fix stopped a worker from its actor's `Destroying` and
+  `AncestryChanged` handlers, but those run in serial when Roblox gets to
+  them, and a frame's parallel callback could run first, still marked alive,
+  with its actor already destroyed. Such a worker also decoded and drew a band
+  it no longer showed. Each frame now checks the tree itself, that the worker
+  is still inside its actor and the actor is still parented, before doing any
+  work.
+
 ## [0.7.2] - 2026-09-19
 
 ### Fixed
