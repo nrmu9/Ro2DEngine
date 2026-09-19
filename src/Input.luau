@@ -54,7 +54,8 @@ local function firstPad()
 end
 
 local PAD_DEADZONE_SQ = 0.15 * 0.15
-local PAD_RESCAN = 0.25
+local PAD_RESCAN = 0.1
+local PAD_SWITCH_MARGIN = 0.25
 local rescanAt = 0
 
 local function stickOf(pad): (number, number, number, number)
@@ -71,14 +72,17 @@ local function stickOf(pad): (number, number, number, number)
 	return lx, ly, rx, ry
 end
 
+local function deflection(sx, sy, rx, ry)
+	return math.max(sx * sx + sy * sy, rx * rx + ry * ry)
+end
+
 local function pollPads(now: number)
+	local held = 0
 	if activePad then
 		local sx, sy, rx, ry = stickOf(activePad)
 		sticks[1], sticks[2], sticks[3], sticks[4] = sx, sy, rx, ry
-		if sx * sx + sy * sy > PAD_DEADZONE_SQ then
-			Input.GamepadActive = true
-			return
-		end
+		held = deflection(sx, sy, rx, ry)
+		if sx * sx + sy * sy > PAD_DEADZONE_SQ then Input.GamepadActive = true end
 	else
 		sticks[1], sticks[2], sticks[3], sticks[4] = 0, 0, 0, 0
 	end
@@ -86,16 +90,23 @@ local function pollPads(now: number)
 	rescanAt = now + PAD_RESCAN
 	local ok, pads = pcall(function() return UserInputService:GetConnectedGamepads() end)
 	if not ok or pads == nil then return end
+	local best, bestMag = nil, math.max(PAD_DEADZONE_SQ, held + PAD_SWITCH_MARGIN)
+	local bx, by, brx, bry = 0, 0, 0, 0
 	for _, pad in ipairs(pads) do
 		if pad ~= activePad then
 			local sx, sy, rx, ry = stickOf(pad)
-			if sx * sx + sy * sy > PAD_DEADZONE_SQ then
-				activePad = pad
-				sticks[1], sticks[2], sticks[3], sticks[4] = sx, sy, rx, ry
-				Input.GamepadActive = true
-				return
+			local mag = deflection(sx, sy, rx, ry)
+			if mag > bestMag then
+				best, bestMag = pad, mag
+				bx, by, brx, bry = sx, sy, rx, ry
 			end
 		end
+	end
+	if best then
+		activePad = best
+		sticks[1], sticks[2], sticks[3], sticks[4] = bx, by, brx, bry
+		Input.GamepadActive = true
+		return
 	end
 	if not activePad and #pads > 0 then activePad = firstPad() end
 end
@@ -151,7 +162,7 @@ end
 
 UserInputService.LastInputTypeChanged:Connect(function(t)
 	if PADS[t] then
-		activePad = t
+		if not activePad then activePad = t end
 		Input.GamepadActive = true
 		if not padInit then centerCursor() end
 	elseif t == Enum.UserInputType.MouseMovement or t == MB1 or t == TOUCH or t == KEYBOARD then
@@ -228,13 +239,23 @@ local function verifyHeld()
 	if mb1Down and not UserInputService:IsMouseButtonPressed(MB1) then mb1Down = false end
 	if mouse.RightDown and not UserInputService:IsMouseButtonPressed(MB2) then mouse.RightDown = false end
 	if mb3Down and not UserInputService:IsMouseButtonPressed(MB3) then mb3Down = false end
-	if activePad then
-		for kc in pairs(padHeld) do
-			local ok, v = pcall(UserInputService.IsGamepadButtonDown, UserInputService, activePad, kc)
-			if not ok or v ~= true then padHeld[kc] = nil end
+	if next(padHeld) then
+		local ok, pads = pcall(function() return UserInputService:GetConnectedGamepads() end)
+		if not ok or pads == nil or #pads == 0 then
+			table.clear(padHeld)
+		else
+			for kc in pairs(padHeld) do
+				local down = false
+				for _, pad in ipairs(pads) do
+					local okB, v = pcall(UserInputService.IsGamepadButtonDown, UserInputService, pad, kc)
+					if okB and v == true then
+						down = true
+						break
+					end
+				end
+				if not down then padHeld[kc] = nil end
+			end
 		end
-	elseif next(padHeld) then
-		table.clear(padHeld)
 	end
 	if touchCount > 0 then
 		for obj in pairs(touches) do

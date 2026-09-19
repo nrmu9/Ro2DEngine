@@ -7,6 +7,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Switching to a second controller mid-game broke its input until the first
+  was picked up again. A held button was checked against the active pad only,
+  so a trigger held on the second read as up and was released every frame; and
+  another pad was only looked for while the active one's stick was centred, so a
+  first controller whose stick drifted past the deadzone stayed active for good.
+  A held button now counts on any connected pad; the pad whose stick is pushed
+  clearly harder takes over, re-checked every 0.1 s; and `LastInputTypeChanged`,
+  which a noisy stick fires, only chooses a pad when none is chosen yet.
 - Thin dark lines along the seams between parallel bands, at some window
   sizes and on phones. Roblox draws UI at the device's pixel density, which is
   often fractional, so two band images meeting at a seam each only partly
