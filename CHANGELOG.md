@@ -4,7 +4,7 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.3] - 2026-09-19
 
 ### Fixed
 - A render worker whose band had been rebuilt away could still raise
@@ -490,6 +490,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.7.3]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.7.3
 [0.7.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.7.2
 [0.7.1]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.7.1
 [0.7.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.7.0
