@@ -1,7 +1,7 @@
 --!optimize 2
 --!native
 
-local abs, cos, sin, sqrt = math.abs, math.cos, math.sin, math.sqrt
+local abs, cos, sin, sqrt, min, max = math.abs, math.cos, math.sin, math.sqrt, math.min, math.max
 
 local DrawBounds = {}
 
@@ -16,6 +16,16 @@ end
 
 function DrawBounds.point(x, y, size): (number, number, number, number)
 	return x, y, x + size, y + size
+end
+
+function DrawBounds.circle(cx, cy, radius): (number, number, number, number)
+	local r = radius + 2
+	return cx - r, cy - r, cx + r, cy + r
+end
+
+function DrawBounds.line(x0, y0, x1, y1, thickness): (number, number, number, number)
+	local pad = thickness * 0.5 + 2
+	return min(x0, x1) - pad, min(y0, y1) - pad, max(x0, x1) + pad, max(y0, y1) + pad
 end
 
 function DrawBounds.sprite(x, y, w, h): (number, number, number, number)

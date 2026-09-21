@@ -6,7 +6,6 @@ local SharedTableRegistry = game:GetService("SharedTableRegistry")
 
 local engine = script.Parent.Parent
 local CommandBuffer = require(engine:WaitForChild("CommandBuffer"))
-local Shapes = require(engine:WaitForChild("Shapes"))
 local FontCodec = require(script.Parent:WaitForChild("FontCodec"))
 local ComputePool = require(script.Parent:WaitForChild("ComputePool"))
 local DrawBounds = require(script.Parent:WaitForChild("DrawBounds"))
@@ -221,34 +220,40 @@ end
 function PR.Draw.Pixel(x, y, r, g, b, a)
 	if PR.IsReady then PR.Draw.Rect(x, y, 1, 1, r, g, b, a) end
 end
-local function plotPoint(x, y, r, g, b, a)
-	local x0 = x - PR.Camera.X
-	local y0 = y - PR.Camera.Y
-	a = a or 255
+function PR.Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)
+	if not PR.IsReady then return end
+	openFrame()
+	local ax0, ay0 = x0 - PR.Camera.X, y0 - PR.Camera.Y
+	local ax1, ay1 = x1 - PR.Camera.X, y1 - PR.Camera.Y
 	local one = only()
 	if one then
-		one:point(x0, y0, 1, r, g, b, a)
+		one:line(ax0, ay0, ax1, ay1, thickness, r, g, b)
 		return
 	end
-	local ax, ay, bx, by = DrawBounds.point(x0, y0, 1)
+	local ax, ay, bx, by = DrawBounds.line(ax0, ay0, ax1, ay1, thickness)
 	for i = 1, nBands do
 		local bd = bands[i]
 		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:point(x0, y0, 1, r, g, b, a)
+			bd.cb:line(ax0, ay0, ax1, ay1, thickness, r, g, b)
 		end
 	end
 end
-function PR.Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)
-	if not PR.IsReady then return end
-	PR.Draw.BeginPoints()
-	Shapes.line(plotPoint, x0, y0, x1, y1, thickness, r, g, b)
-	PR.Draw.EndPoints()
-end
 function PR.Draw.CircleSDF(x, y, radius, r, g, b, a)
 	if not PR.IsReady then return end
-	PR.Draw.BeginPoints()
-	Shapes.circle(plotPoint, x, y, radius, r, g, b, a)
-	PR.Draw.EndPoints()
+	openFrame()
+	local cx, cy = x - PR.Camera.X, y - PR.Camera.Y
+	local one = only()
+	if one then
+		one:circle(cx, cy, radius, r, g, b, a)
+		return
+	end
+	local ax, ay, bx, by = DrawBounds.circle(cx, cy, radius)
+	for i = 1, nBands do
+		local bd = bands[i]
+		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+			bd.cb:circle(cx, cy, radius, r, g, b, a)
+		end
+	end
 end
 function PR.Draw.MeasureText(text, font, scale)
 	if not font then return 0 end

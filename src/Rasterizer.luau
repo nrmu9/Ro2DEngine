@@ -10,8 +10,14 @@ local cos, sin = math.cos, math.sin
 local HUGE = math.huge
 local EPS = 1e-9
 
+local Shapes = if script then require(script.Parent:WaitForChild("Shapes")) else nil
+
 local Rasterizer = {}
 Rasterizer.__index = Rasterizer
+
+function Rasterizer.useShapes(shapes)
+	Shapes = shapes
+end
 
 function Rasterizer.new(buf: buffer, bufW: number, bufH: number, sprites, fonts)
 	return setmetatable({
@@ -181,6 +187,67 @@ function Rasterizer:points(src: buffer, off: number, n: number)
 		off += 13
 	end
 	self.dx0, self.dy0, self.dx1, self.dy1 = dx0, dy0, dx1, dy1
+end
+
+local function blendInto(buf: buffer, off: number, r: number, g: number, b: number, a: number)
+	if a >= 255 then
+		writeu32(buf, off, r + g * 256 + b * 65536 + 0xFF000000)
+		return
+	end
+	local ia = 255 - a
+	local dst = readu32(buf, off)
+	writeu32(buf, off,
+		(r * a + (dst % 256) * ia) // 255
+		+ ((g * a + (dst // 256 % 256) * ia) // 255) * 256
+		+ ((b * a + (dst // 65536 % 256) * ia) // 255) * 65536
+		+ 0xFF000000)
+end
+
+function Rasterizer:circle(wx, wy, radius, r, g, b, a)
+	if not Shapes or radius <= 0 then return end
+	local bw, buf = self.w, self.buf
+	local cx0, cy0, cx1, cy1 = self.cx0, self.cy0, self.cx1, self.cy1
+	local cx, cy = wx - self.ox, wy - self.oy
+	local x0, y0 = floor(cx - radius - 1), floor(cy - radius - 1)
+	local x1, y1 = floor(cx + radius + 1), floor(cy + radius + 1)
+	if x1 < cx0 or y1 < cy0 or x0 > cx1 or y0 > cy1 then return end
+	mark(self, max(x0, cx0), max(y0, cy0), min(x1, cx1), min(y1, cy1))
+	local function plot(px, py, pr, pg, pb, pa)
+		blendInto(buf, (py * bw + px) * 4, pr, pg, pb, pa)
+	end
+	local function span(sx0, sx1, py, pr, pg, pb, pa)
+		local off = (py * bw + sx0) * 4
+		if pa >= 255 then
+			local packed = pr + pg * 256 + pb * 65536 + 0xFF000000
+			for _ = sx0, sx1 do
+				writeu32(buf, off, packed)
+				off += 4
+			end
+		else
+			for _ = sx0, sx1 do
+				blendInto(buf, off, pr, pg, pb, pa)
+				off += 4
+			end
+		end
+	end
+	Shapes.circle(plot, cx, cy, radius, r, g, b, a or 255, cx0, cy0, cx1, cy1, span)
+end
+
+function Rasterizer:line(wx0, wy0, wx1, wy1, thickness, r, g, b)
+	if not Shapes or thickness <= 0 then return end
+	local bw, buf = self.w, self.buf
+	local cx0, cy0, cx1, cy1 = self.cx0, self.cy0, self.cx1, self.cy1
+	local ax, ay = wx0 - self.ox, wy0 - self.oy
+	local bx, by = wx1 - self.ox, wy1 - self.oy
+	local pad = thickness * 0.5 + 1
+	local x0, y0 = floor(min(ax, bx) - pad), floor(min(ay, by) - pad)
+	local x1, y1 = floor(max(ax, bx) + pad), floor(max(ay, by) + pad)
+	if x1 < cx0 or y1 < cy0 or x0 > cx1 or y0 > cy1 then return end
+	mark(self, max(x0, cx0), max(y0, cy0), min(x1, cx1), min(y1, cy1))
+	local function plot(px, py, pr, pg, pb, pa)
+		blendInto(buf, (py * bw + px) * 4, pr, pg, pb, pa)
+	end
+	Shapes.line(plot, ax, ay, bx, by, thickness, r, g, b, cx0, cy0, cx1, cy1)
 end
 
 function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)

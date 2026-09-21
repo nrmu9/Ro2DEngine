@@ -4,6 +4,24 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `Draw.CircleSDF` and `Draw.LineSDF` were unusable at any size under the
+  threaded renderer. Both worked a shape out a pixel at a time on the main
+  thread and sent every pixel to the workers as a point of its own, checked
+  against every band: a filled circle 280 pixels in radius was a quarter of a
+  million commands, and a screen that drew two of them ran at two frames a
+  second. A circle and a line are now one command each, written only into the
+  bands they touch, and a worker fills its own part of the shape.
+- The shapes themselves do less. A circle's solid middle is filled a row at a
+  time and only its rim is measured; a line is walked along its own width
+  rather than across the whole box it sits in, which for a long diagonal was
+  nearly all of the work. The pixels drawn are the same ones as before, in both
+  renderers, since both still draw from `Shapes`.
+- A circle or a line drawn between `BeginPoints` and `EndPoints` no longer
+  corrupts the batch: the batch is closed round it and opened again.
+
 ## [0.7.3] - 2026-09-19
 
 ### Fixed

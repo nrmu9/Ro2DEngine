@@ -19,6 +19,8 @@ local OP = {
 	CLIP = 8,
 	POINTS = 9,
 	BACKGROUND = 10,
+	CIRCLE = 11,
+	LINE = 12,
 }
 CommandBuffer.OP = OP
 
@@ -144,6 +146,31 @@ function CommandBuffer:rectRot(cx, cy, w, h, angle, r, g, b, a)
 	self.cur = c + 25
 end
 
+function CommandBuffer:circle(x, y, radius, r, g, b, a)
+	local reopen = self.ptsAt ~= nil
+	if reopen then self:endPoints() end
+	self:_need(17)
+	local buf, c = self.buf, self.cur
+	wu8(buf, c, OP.CIRCLE)
+	wf32(buf, c + 1, x); wf32(buf, c + 5, y); wf32(buf, c + 9, radius)
+	wu8(buf, c + 13, r); wu8(buf, c + 14, g); wu8(buf, c + 15, b); wu8(buf, c + 16, a or 255)
+	self.cur = c + 17
+	if reopen then self:beginPoints() end
+end
+
+function CommandBuffer:line(x0, y0, x1, y1, thickness, r, g, b)
+	local reopen = self.ptsAt ~= nil
+	if reopen then self:endPoints() end
+	self:_need(24)
+	local buf, c = self.buf, self.cur
+	wu8(buf, c, OP.LINE)
+	wf32(buf, c + 1, x0); wf32(buf, c + 5, y0); wf32(buf, c + 9, x1); wf32(buf, c + 13, y1)
+	wf32(buf, c + 17, thickness)
+	wu8(buf, c + 21, r); wu8(buf, c + 22, g); wu8(buf, c + 23, b)
+	self.cur = c + 24
+	if reopen then self:beginPoints() end
+end
+
 function CommandBuffer:sprite(x, y, spriteId, flipX, flipY)
 	self:_need(12)
 	local buf, c = self.buf, self.cur
@@ -193,6 +220,7 @@ function CommandBuffer.decode(bytes: string, h)
 	local fRect, fRectRot, fPoints = h.rect, h.rectRot, h.points
 	local fSprite, fSpriteEx, fText = h.sprite, h.spriteEx, h.text
 	local fBackground = h.background
+	local fCircle, fLine = h.circle, h.line
 	local c = 0
 	while c < len do
 		local op = ru8(buf, c)
@@ -237,6 +265,18 @@ function CommandBuffer.decode(bytes: string, h)
 		elseif op == OP.BACKGROUND then
 			if fBackground then fBackground(h, ru8(buf, c + 1) == 1) end
 			c += 2
+		elseif op == OP.CIRCLE then
+			if fCircle then
+				fCircle(h, rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9),
+					ru8(buf, c + 13), ru8(buf, c + 14), ru8(buf, c + 15), ru8(buf, c + 16))
+			end
+			c += 17
+		elseif op == OP.LINE then
+			if fLine then
+				fLine(h, rf32(buf, c + 1), rf32(buf, c + 5), rf32(buf, c + 9), rf32(buf, c + 13), rf32(buf, c + 17),
+					ru8(buf, c + 21), ru8(buf, c + 22), ru8(buf, c + 23))
+			end
+			c += 24
 		else
 			break
 		end
