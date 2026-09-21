@@ -169,12 +169,15 @@ frameConn = RunService.RenderStepped:ConnectParallel(function()
 			buffer.copy(src, row * rowBytes, buf, ((uy + row) * BAND_W + ux) * 4, rowBytes)
 		end
 	end
-	task.synchronize()
+	if not alive or script.Parent ~= actor or actor.Parent == nil then return end
+	if not pcall(task.synchronize) then return end
+	local target = image
+	if not alive or target == nil then return end
 	local ok, err
 	if src == buf then
-		ok, err = pcall(image.WritePixelsBuffer, image, Vector2.zero, imgSize, buf)
+		ok, err = pcall(target.WritePixelsBuffer, target, Vector2.zero, imgSize, buf)
 	else
-		ok, err = pcall(image.WritePixelsBuffer, image, Vector2.new(ux, uy), Vector2.new(uw, uh), src)
+		ok, err = pcall(target.WritePixelsBuffer, target, Vector2.new(ux, uy), Vector2.new(uw, uh), src)
 	end
 	if not ok and not writeWarned then
 		writeWarned = true

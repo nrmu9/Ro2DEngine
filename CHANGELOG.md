@@ -21,6 +21,16 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   renderers, since both still draw from `Shapes`.
 - A circle or a line drawn between `BeginPoints` and `EndPoints` no longer
   corrupts the batch: the batch is closed round it and opened again.
+- A render worker could still raise "task.synchronize() may only be called
+  from a script that is a descendant of an Actor", after 0.7.3. That fix looks
+  at the tree when a frame's callback starts, and the callback then decodes and
+  draws its band before it synchronizes to upload it. The decode is the long
+  part of a worker's frame, it runs in parallel, and the actor can go in the
+  middle of it: a rebuild, a teleport, or Roblox taking `PlayerGui` down as the
+  player leaves, which no handler of the engine's gets to run ahead of. The
+  check is now made again at the point of use, the synchronize itself is
+  protected so a worker that loses the race drops its frame and says nothing,
+  and the image is read once after it, since stopping the worker clears it.
 
 ## [0.7.3] - 2026-09-19
 
