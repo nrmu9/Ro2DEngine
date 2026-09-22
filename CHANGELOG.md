@@ -7,6 +7,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- `Input.IsKeyPressed`, `Input.KeysPressedThisFrame` and the wheel's delta were
+  cleared at the end of the frame, after Roblox had processed the frame's input
+  and after everything connected to `RenderStepped` had already run, so a scene
+  reading a key press from `RenderStepped` never saw one. The per-frame input
+  bookkeeping now runs just before Roblox processes input, so a press is visible
+  for exactly one frame to whatever runs after it, whichever step that is.
 - A one-pixel dark line could show between two of the threaded renderer's
   tiles at some window sizes. Each tile's image carries a column and a row of
   overlap so the tiles never leave a gap, but each label was sized to that

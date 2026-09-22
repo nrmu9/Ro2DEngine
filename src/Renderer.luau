@@ -916,8 +916,8 @@ local overlayWarned = false
 function Renderer.System.SetOverlay(fn) overlayFn = fn end
 
 local wasReady = false
+RunService:BindToRenderStep("Ro2DEngineInputFlush", Enum.RenderPriority.Input.Value - 1, Input.Flush)
 RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, function()
-	Input.Flush()
 	UI.Flush()
 	if not Grid.IsReady then
 		wasReady = false
