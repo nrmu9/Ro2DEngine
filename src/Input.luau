@@ -33,6 +33,7 @@ local Input = {
 
 local keysDown = Input.KeysDown
 local keysPressed = Input.KeysPressedThisFrame
+local keysArriving = {}
 local mouse = Input.Mouse
 local mb1Down = false
 local mb3Down = false
@@ -195,7 +196,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
 	if t == KEYBOARD then
 		keysDown[input.KeyCode] = true
-		keysPressed[input.KeyCode] = true
+		keysArriving[input.KeyCode] = true
 	elseif t == MB1 then
 		mb1Down = true
 		mouse.LeftDown = true
@@ -282,6 +283,10 @@ end)
 
 function Input.Flush()
 	table.clear(keysPressed)
+	for code in pairs(keysArriving) do
+		keysPressed[code] = true
+	end
+	table.clear(keysArriving)
 	mouse.ScrollDelta = 0
 	verifyHeld()
 	local pos = UserInputService:GetMouseLocation()
