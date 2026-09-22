@@ -340,6 +340,7 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 			local bw = min(tileW, targetW - bx)
 			local bh = min(tileH, targetH - by)
 			if bw > 0 and bh > 0 then
+				local vw, vh = bw, bh
 				bw += min(over, targetW - bx - bw)
 				bh += min(over, targetH - by - bh)
 				local a = template:Clone()
@@ -351,6 +352,8 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 				a:SetAttribute("BandY", by)
 				a:SetAttribute("BandW", bw)
 				a:SetAttribute("BandH", bh)
+				a:SetAttribute("BandVisW", vw)
+				a:SetAttribute("BandVisH", vh)
 				a:SetAttribute("DisplayScale", displayScale)
 				a:SetAttribute("OffsetX", offX)
 				a:SetAttribute("OffsetY", offY)

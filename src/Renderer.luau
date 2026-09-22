@@ -146,8 +146,12 @@ local function rebuildGrid()
 			frame.Name = string.format("Chunk_%d_%d", x, y)
 			frame.BackgroundTransparency = 1
 			frame.BorderSizePixel = 0
-			frame.Position = UDim2.fromOffset(baseOffsetX + offsetX * displayScale, baseOffsetY + offsetY * displayScale)
-			frame.Size = UDim2.fromOffset(chunkW * displayScale, chunkH * displayScale)
+			local ex0 = math.round(baseOffsetX + offsetX * displayScale)
+			local ey0 = math.round(baseOffsetY + offsetY * displayScale)
+			local ex1 = math.round(baseOffsetX + (offsetX + chunkW) * displayScale)
+			local ey1 = math.round(baseOffsetY + (offsetY + chunkH) * displayScale)
+			frame.Position = UDim2.fromOffset(ex0, ey0)
+			frame.Size = UDim2.fromOffset(ex1 - ex0, ey1 - ey0)
 			frame.ResampleMode = filterMode
 			frame.Parent = CanvasFrame
 			table.insert(ChunkUIElements, frame)

@@ -7,6 +7,13 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- A one-pixel dark line could show between two of the threaded renderer's
+  tiles at some window sizes. Each tile's image carries a column and a row of
+  overlap so the tiles never leave a gap, but each label was sized to that
+  whole image, so two labels met at a fraction of a screen pixel and the
+  rounding fell either way. A label now shows only its tile's own pixels and
+  ends exactly where the next begins, and the plain renderer's chunks are
+  placed the same way.
 - `Draw.CircleSDF` and `Draw.LineSDF` were unusable at any size under the
   threaded renderer. Both worked a shape out a pixel at a time on the main
   thread and sent every pixel to the workers as a point of its own, checked
