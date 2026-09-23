@@ -37,7 +37,7 @@ local Shapes = require(script.Parent:WaitForChild("Shapes"))
 local Renderer = {
 	System = {},
 	Draw = {},
-	Camera = { X = 0, Y = 0 },
+	Camera = { X = 0, Y = 0, Zoom = 1 },
 	Grid = {
 		ChunksX = 0, ChunksY = 0,
 		DisplayScale = 1,
@@ -319,6 +319,12 @@ local Draw = Renderer.Draw
 local Grid = Renderer.Grid
 local Camera = Renderer.Camera
 
+local function zoomed(worldX: number, worldY: number, z: number): (number, number)
+	local hw, hh = Grid.Width * 0.5, Grid.Height * 0.5
+	return Camera.X + hw + (worldX - Camera.X - hw) * z, Camera.Y + hh + (worldY - Camera.Y - hh) * z
+end
+local spriteOpts = { Scale = 1, FlipX = false, FlipY = false }
+
 local EMPTY_OPTS = table.freeze({})
 
 local clipX0, clipY0, clipX1, clipY1 = 0, 0, -1, -1
@@ -333,6 +339,12 @@ function Draw.SetClip(worldX: number, worldY: number, w: number, h: number)
 	if w <= 0 or h <= 0 then
 		clipX0, clipY0, clipX1, clipY1 = 0, 0, -1, -1
 		return
+	end
+	local z = Camera.Zoom
+	if z ~= 1 then
+		local x1, y1 = zoomed(worldX + w, worldY + h, z)
+		worldX, worldY = zoomed(worldX, worldY, z)
+		w, h = x1 - worldX, y1 - worldY
 	end
 	local x0 = floor(worldX - Camera.X)
 	local y0 = floor(worldY - Camera.Y)
@@ -351,6 +363,10 @@ end
 
 function Draw.Pixel(worldX: number, worldY: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady then return end
+	if Camera.Zoom ~= 1 then
+		Draw.Rect(worldX, worldY, 1, 1, r, g, b, a)
+		return
+	end
 
 	local x = floor(worldX - Camera.X)
 	local y = floor(worldY - Camera.Y)
@@ -376,6 +392,11 @@ end
 
 function Draw.Sprite(worldX: number, worldY: number, sprite: any, flipX: boolean?, flipY: boolean?)
 	if not Grid.IsReady or sprite.IsEmpty then return end
+	if Camera.Zoom ~= 1 then
+		spriteOpts.FlipX, spriteOpts.FlipY = flipX == true, flipY == true
+		Draw.SpriteEx(worldX + sprite.Width * 0.5, worldY + sprite.Height * 0.5, sprite, spriteOpts)
+		return
+	end
 
 	local startX = floor(worldX - Camera.X)
 	local startY = floor(worldY - Camera.Y)
@@ -468,6 +489,11 @@ function Draw.SpriteEx(worldX: number, worldY: number, sprite: any, opts: any?)
 	local rot = opts.Rotation or 0
 	local scale = opts.Scale or 1
 	if scale <= 0 then return end
+	local z = Camera.Zoom
+	if z ~= 1 then
+		worldX, worldY = zoomed(worldX, worldY, z)
+		scale *= z
+	end
 	local tintR, tintG, tintB = opts.TintR, opts.TintG, opts.TintB
 	local tinted = tintR ~= nil
 	local alpha = opts.Alpha or 255
@@ -612,6 +638,11 @@ function Draw.Text(worldX: number, worldY: number, text: string, font: any, opts
 	opts = opts or EMPTY_OPTS
 	local scale = opts.Scale or 1
 	if scale <= 0 then return end
+	local z = Camera.Zoom
+	if z ~= 1 then
+		worldX, worldY = zoomed(worldX, worldY, z)
+		scale *= z
+	end
 	local tintR, tintG, tintB = opts.TintR, opts.TintG, opts.TintB
 	local tinted = tintR ~= nil
 	local alpha = opts.Alpha or 255
@@ -735,6 +766,15 @@ end
 
 function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady or w <= 0 or h <= 0 then return end
+	local z = Camera.Zoom
+	if z ~= 1 then
+		local x1, y1 = zoomed(worldX + w, worldY + h, z)
+		worldX, worldY = zoomed(worldX, worldY, z)
+		w = floor(x1 - Camera.X) - floor(worldX - Camera.X)
+		h = floor(y1 - Camera.Y) - floor(worldY - Camera.Y)
+		if w < 1 then w = 1 end
+		if h < 1 then h = 1 end
+	end
 
 	local x0 = floor(worldX - Camera.X)
 	local y0 = floor(worldY - Camera.Y)
@@ -800,6 +840,11 @@ end
 
 function Draw.RectRotated(worldX: number, worldY: number, w: number, h: number, angle: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady or w <= 0 or h <= 0 then return end
+	local z = Camera.Zoom
+	if z ~= 1 then
+		worldX, worldY = zoomed(worldX, worldY, z)
+		w, h = w * z, h * z
+	end
 	local cx = worldX - Camera.X
 	local cy = worldY - Camera.Y
 	local ca, sa = cos(angle), sin(angle)
@@ -892,11 +937,28 @@ end
 
 function Draw.LineSDF(worldX0: number, worldY0: number, worldX1: number, worldY1: number, thickness: number, r: number, g: number, b: number)
 	if not Grid.IsReady then return end
+	local z = Camera.Zoom
+	if z ~= 1 then
+		worldX0, worldY0 = zoomed(worldX0, worldY0, z)
+		worldX1, worldY1 = zoomed(worldX1, worldY1, z)
+		Camera.Zoom = 1
+		Shapes.line(Draw.Pixel, worldX0, worldY0, worldX1, worldY1, thickness * z, r, g, b)
+		Camera.Zoom = z
+		return
+	end
 	Shapes.line(Draw.Pixel, worldX0, worldY0, worldX1, worldY1, thickness, r, g, b)
 end
 
 function Draw.CircleSDF(worldX: number, worldY: number, radius: number, r: number, g: number, b: number, a: number?)
 	if not Grid.IsReady then return end
+	local z = Camera.Zoom
+	if z ~= 1 then
+		worldX, worldY = zoomed(worldX, worldY, z)
+		Camera.Zoom = 1
+		Shapes.circle(Draw.Pixel, worldX, worldY, radius * z, r, g, b, a)
+		Camera.Zoom = z
+		return
+	end
 	Shapes.circle(Draw.Pixel, worldX, worldY, radius, r, g, b, a)
 end
 function Draw.Clear(r: number, g: number, b: number, a: number?)
@@ -935,10 +997,10 @@ RunService:BindToRenderStep("Ro2DEngineFlush", Enum.RenderPriority.Last.Value, f
 	end
 
 	if overlayFn then
-		local ocx, ocy = Camera.X, Camera.Y
-		Camera.X, Camera.Y = 0, 0
+		local ocx, ocy, oz = Camera.X, Camera.Y, Camera.Zoom
+		Camera.X, Camera.Y, Camera.Zoom = 0, 0, 1
 		local ok, err = pcall(overlayFn)
-		Camera.X, Camera.Y = ocx, ocy
+		Camera.X, Camera.Y, Camera.Zoom = ocx, ocy, oz
 		if not ok and not overlayWarned then
 			overlayWarned = true
 			warn("[Ro2D] overlay error, further errors suppressed: " .. tostring(err))

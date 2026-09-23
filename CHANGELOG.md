@@ -4,6 +4,17 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `Ro2D.Camera.Zoom`, on both renderers: every draw is scaled about the middle
+  of the screen, its position and its size alike, so a game can draw its world
+  nearer or further without working every size out again. A sprite drawn with
+  `Draw.Sprite` is drawn scaled, and the distance-field shapes are worked out
+  at their zoomed size rather than as scaled pixels. The overlay is drawn at a
+  zoom of one, as it is drawn at a camera of nought. One is the default, and a
+  draw at one is where it always was.
+
 ## [0.7.4] - 2026-09-23
 
 ### Fixed

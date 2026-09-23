@@ -124,6 +124,11 @@ end)
 All `Draw` calls operate in world space (offset by `Ro2D.Camera`). Colors are
 `0-255` integers; alpha is optional and defaults to `255`.
 
+`Ro2D.Camera.Zoom` (default `1`) scales every draw about the middle of the
+screen: positions move away from the middle and sizes, text and sprites grow by
+the same factor. Set it for the part of a frame that is the world and put it
+back to `1` for a HUD drawn over it.
+
 | Function | Description |
 | --- | --- |
 | `Draw.Pixel(x, y, r, g, b, a?)` | Write a single pixel. |

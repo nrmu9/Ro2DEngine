@@ -171,7 +171,7 @@ export type Ro2DAPI = {
 	Enums: {
 		PhysicsMode: { AABB: string, Radial: string },
 	},
-	Camera: { X: number, Y: number },
+	Camera: { X: number, Y: number, Zoom: number },
 	Width: number,
 	Height: number,
 	IsReady: boolean,

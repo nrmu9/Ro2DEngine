@@ -15,7 +15,14 @@ local floor, min, max, ceil = math.floor, math.min, math.max, math.ceil
 local PR = {}
 PR.Draw = {}
 PR.System = {}
-PR.Camera = { X = 0, Y = 0 }
+PR.Camera = { X = 0, Y = 0, Zoom = 1 }
+
+local function zoomed(x: number, y: number, z: number): (number, number)
+	local cam = PR.Camera
+	local hw, hh = PR.Width * 0.5, PR.Height * 0.5
+	return cam.X + hw + (x - cam.X - hw) * z, cam.Y + hh + (y - cam.Y - hh) * z
+end
+local spriteOpts = { Scale = 1, FlipX = false, FlipY = false }
 local overlayWarned = false
 local presentWarned = false
 PR.Width = 0
@@ -105,6 +112,12 @@ function PR.Draw.SetClip(x, y, w, h)
 		for i = 1, nBands do bands[i].cb:clip(0, 0, -1, -1) end
 		return
 	end
+	local z = PR.Camera.Zoom
+	if z ~= 1 then
+		local x1, y1 = zoomed(x + w, y + h, z)
+		x, y = zoomed(x, y, z)
+		w, h = x1 - x, y1 - y
+	end
 	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
 	for i = 1, nBands do bands[i].cb:clip(x0, y0, x0 + w - 1, y0 + h - 1) end
 end
@@ -116,6 +129,12 @@ end
 function PR.Draw.Rect(x, y, w, h, r, g, b, a)
 	if not PR.IsReady then return end
 	openFrame()
+	local z = PR.Camera.Zoom
+	if z ~= 1 then
+		local x1, y1 = zoomed(x + w, y + h, z)
+		x, y = zoomed(x, y, z)
+		w, h = max(1, x1 - x), max(1, y1 - y)
+	end
 	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
 	local one = only()
 	if one then
@@ -133,6 +152,11 @@ end
 function PR.Draw.RectRotated(x, y, w, h, angle, r, g, b, a)
 	if not PR.IsReady then return end
 	openFrame()
+	local z = PR.Camera.Zoom
+	if z ~= 1 then
+		x, y = zoomed(x, y, z)
+		w, h = w * z, h * z
+	end
 	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
 	local one = only()
 	if one then
@@ -154,6 +178,11 @@ function PR.Draw.BeginPoints()
 end
 function PR.Draw.Point(x, y, size, r, g, b, a)
 	if not PR.IsReady then return end
+	local z = PR.Camera.Zoom
+	if z ~= 1 then
+		x, y = zoomed(x, y, z)
+		size = max(1, size * z)
+	end
 	local s = floor(size)
 	if s <= 0 then return end
 	if s > 255 then s = 255 end
@@ -179,6 +208,11 @@ function PR.Draw.EndPoints()
 end
 function PR.Draw.Sprite(x, y, sprite, flipX, flipY)
 	if not (PR.IsReady and sprite) then return end
+	if PR.Camera.Zoom ~= 1 then
+		spriteOpts.FlipX, spriteOpts.FlipY = flipX == true, flipY == true
+		PR.Draw.SpriteEx(x + sprite.Width * 0.5, y + sprite.Height * 0.5, sprite, spriteOpts)
+		return
+	end
 	openFrame()
 	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
 	local id = spriteIdOf(sprite)
@@ -200,6 +234,11 @@ function PR.Draw.SpriteEx(x, y, sprite, opts)
 	openFrame()
 	opts = opts or {}
 	local scale, rot = opts.Scale or 1, opts.Rotation or 0
+	local z = PR.Camera.Zoom
+	if z ~= 1 then
+		x, y = zoomed(x, y, z)
+		scale *= z
+	end
 	local tr, tg, tb = opts.TintR or 255, opts.TintG or 255, opts.TintB or 255
 	local al = opts.Alpha or 255
 	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
@@ -223,6 +262,12 @@ end
 function PR.Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)
 	if not PR.IsReady then return end
 	openFrame()
+	local z = PR.Camera.Zoom
+	if z ~= 1 then
+		x0, y0 = zoomed(x0, y0, z)
+		x1, y1 = zoomed(x1, y1, z)
+		thickness *= z
+	end
 	local ax0, ay0 = x0 - PR.Camera.X, y0 - PR.Camera.Y
 	local ax1, ay1 = x1 - PR.Camera.X, y1 - PR.Camera.Y
 	local one = only()
@@ -241,6 +286,11 @@ end
 function PR.Draw.CircleSDF(x, y, radius, r, g, b, a)
 	if not PR.IsReady then return end
 	openFrame()
+	local z = PR.Camera.Zoom
+	if z ~= 1 then
+		x, y = zoomed(x, y, z)
+		radius *= z
+	end
 	local cx, cy = x - PR.Camera.X, y - PR.Camera.Y
 	local one = only()
 	if one then
@@ -274,6 +324,11 @@ function PR.Draw.Text(x, y, text, font, opts)
 	opts = opts or {}
 	local scale = opts.Scale or 1
 	if scale <= 0 then return end
+	local z = PR.Camera.Zoom
+	if z ~= 1 then
+		x, y = zoomed(x, y, z)
+		scale *= z
+	end
 	local align = opts.Align
 	local width = nil
 	if align == "center" then
@@ -425,10 +480,10 @@ function PR.System.Init(canvasFrame, config)
 			for i = 1, nBands do bands[i].cb:tint(0, 0, 0, PR._fadeA) end
 		end
 		if PR._overlay then
-			local ocx, ocy = PR.Camera.X, PR.Camera.Y
-			PR.Camera.X, PR.Camera.Y = 0, 0
+			local ocx, ocy, oz = PR.Camera.X, PR.Camera.Y, PR.Camera.Zoom
+			PR.Camera.X, PR.Camera.Y, PR.Camera.Zoom = 0, 0, 1
 			local ok, err = pcall(PR._overlay)
-			PR.Camera.X, PR.Camera.Y = ocx, ocy
+			PR.Camera.X, PR.Camera.Y, PR.Camera.Zoom = ocx, ocy, oz
 			if not ok and not overlayWarned then
 				overlayWarned = true
 				warn("[Ro2D] overlay error, further errors suppressed: " .. tostring(err))
