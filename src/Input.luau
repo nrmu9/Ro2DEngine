@@ -34,6 +34,7 @@ local Input = {
 local keysDown = Input.KeysDown
 local keysPressed = Input.KeysPressedThisFrame
 local keysArriving = {}
+local wheelArriving = 0
 local mouse = Input.Mouse
 local mb1Down = false
 local mb3Down = false
@@ -277,7 +278,7 @@ end
 UserInputService.InputChanged:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
 	if input.UserInputType == WHEEL then
-		mouse.ScrollDelta += input.Position.Z
+		wheelArriving += input.Position.Z
 	end
 end)
 
@@ -287,7 +288,8 @@ function Input.Flush()
 		keysPressed[code] = true
 	end
 	table.clear(keysArriving)
-	mouse.ScrollDelta = 0
+	mouse.ScrollDelta = wheelArriving
+	wheelArriving = 0
 	verifyHeld()
 	local pos = UserInputService:GetMouseLocation()
 	mouse.X = pos.X
