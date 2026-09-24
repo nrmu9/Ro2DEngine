@@ -41,6 +41,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     of frames is let go, and what a band keeps is bounded.
 - A band whose command stream is byte for byte the last frame's is neither
   drawn nor uploaded again, so a screen at rest costs the workers nothing.
+- A resolution change no longer freezes the game for a tenth of a second. It
+  used to destroy every worker and start new ones, and each new worker loads the
+  rasterizer into a VM of its own and compiles it to native code: around fifteen
+  milliseconds a worker, eight workers, on the main thread, every time a game
+  switched between screens drawn at different sizes. The workers are kept now
+  and told their new bands; only their images are made again, and the fonts
+  they were sent stay theirs. A worker that never took a layout is replaced at
+  the next one, and a worker only draws a frame published for the layout it has.
 - A draw call costs the main thread about a third less: the bands a command
   reaches are found from the band grid rather than by testing every band, and
   the frame's bookkeeping is done in line. A band's stream is copied once when

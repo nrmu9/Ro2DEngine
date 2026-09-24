@@ -20,58 +20,25 @@ local function A(name)
 	end
 	return v
 end
-local BAND_I = A("BandIndex")
-local CMD_KEY = "c" .. BAND_I
-local BAND_X, BAND_Y = A("BandX"), A("BandY")
-local BAND_W, BAND_H = A("BandW"), A("BandH")
-local VIS_W, VIS_H = A("BandVisW"), A("BandVisH")
-local SCALE = A("DisplayScale")
-local OFF_X, OFF_Y = A("OffsetX"), A("OffsetY")
-local PIXELATED = A("Pixelated") == 1
 
-local imgSize = Vector2.new(BAND_W, BAND_H)
-local imgOk, image = pcall(function()
-	return AssetService:CreateEditableImage({ Size = imgSize })
-end)
-if not imgOk or image == nil then
-	warn("[Ro2D] EditableImage unavailable, this worker will not draw: " .. tostring(image))
-	return
-end
-local frame = Instance.new("ImageLabel")
-frame.Name = string.format("PWorker_%d_%d", BAND_X, BAND_Y)
-frame.BackgroundTransparency = 1
-frame.BorderSizePixel = 0
-frame.ZIndex = BAND_I
-local ex0 = math.round(OFF_X + BAND_X * SCALE)
-local ey0 = math.round(OFF_Y + BAND_Y * SCALE)
-local ex1 = math.round(OFF_X + (BAND_X + VIS_W) * SCALE)
-local ey1 = math.round(OFF_Y + (BAND_Y + VIS_H) * SCALE)
-frame.Position = UDim2.fromOffset(ex0, ey0)
-frame.Size = UDim2.fromOffset(ex1 - ex0, ey1 - ey0)
-frame.ImageRectOffset = Vector2.zero
-frame.ImageRectSize = Vector2.new(VIS_W, VIS_H)
-frame.ResampleMode = PIXELATED and Enum.ResamplerMode.Pixelated or Enum.ResamplerMode.Default
-frame.ImageContent = Content.fromObject(image)
-frame.Parent = actor.Parent
-
-local BAND_BYTES = BAND_W * BAND_H * 4
-local buf = buffer.create(BAND_BYTES)
+local CMD_KEY = "c0"
+local BAND_X, BAND_Y, BAND_W, BAND_H, BAND_BYTES = 0, 0, 1, 1, 4
+local imgSize = Vector2.new(1, 1)
+local image = nil
+local buf = buffer.create(4)
 local sprites, fonts = {}, {}
-local rz = Rasterizer.new(buf, BAND_W, BAND_H, sprites, fonts)
+local rz = Rasterizer.new(buf, 1, 1, sprites, fonts)
 local bg = nil
 local held = false
 local whole = true
-local lx0, ly0, lx1, ly1 = BAND_W, BAND_H, -1, -1
+local lx0, ly0, lx1, ly1 = 1, 1, -1, -1
+local layout = -1
+local imageWarned = false
 
-function rz.background(self, keep)
-	if keep then
-		if bg == nil then bg = buffer.create(BAND_BYTES) end
-		buffer.copy(bg, 0, buf, 0, BAND_BYTES)
-	end
-	held = keep
-	whole = true
-	self:resetDirty()
-end
+local frame = Instance.new("ImageLabel")
+frame.BackgroundTransparency = 1
+frame.BorderSizePixel = 0
+frame.ImageRectOffset = Vector2.zero
 
 local scratch = {}
 local nScratch = 0
@@ -97,6 +64,71 @@ end
 
 local lastBytes, lastHeld, lastCamX, lastCamY, shown = nil, false, 0, 0, false
 
+local function background(self, keep)
+	if keep then
+		if bg == nil then bg = buffer.create(BAND_BYTES) end
+		buffer.copy(bg, 0, buf, 0, BAND_BYTES)
+	end
+	held = keep
+	whole = true
+	self:resetDirty()
+end
+
+local function configure(gen)
+	local BAND_I = A("BandIndex")
+	BAND_X, BAND_Y = A("BandX"), A("BandY")
+	BAND_W, BAND_H = A("BandW"), A("BandH")
+	local VIS_W, VIS_H = A("BandVisW"), A("BandVisH")
+	local SCALE = A("DisplayScale")
+	local OFF_X, OFF_Y = A("OffsetX"), A("OffsetY")
+	local PIXELATED = A("Pixelated") == 1
+	if image then
+		image:Destroy()
+		image = nil
+	end
+	table.clear(sprites)
+	lastBytes, shown = nil, false
+	imgSize = Vector2.new(BAND_W, BAND_H)
+	local imgOk, made = pcall(function()
+		return AssetService:CreateEditableImage({ Size = imgSize })
+	end)
+	if not imgOk or made == nil then
+		frame.Parent = nil
+		if not imageWarned then
+			imageWarned = true
+			warn("[Ro2D] EditableImage unavailable, this worker will not draw: " .. tostring(made))
+		end
+		return
+	end
+	image = made
+	CMD_KEY = "c" .. BAND_I
+	frame.Name = string.format("PWorker_%d_%d", BAND_X, BAND_Y)
+	frame.ZIndex = BAND_I
+	local ex0 = math.round(OFF_X + BAND_X * SCALE)
+	local ey0 = math.round(OFF_Y + BAND_Y * SCALE)
+	local ex1 = math.round(OFF_X + (BAND_X + VIS_W) * SCALE)
+	local ey1 = math.round(OFF_Y + (BAND_Y + VIS_H) * SCALE)
+	frame.Position = UDim2.fromOffset(ex0, ey0)
+	frame.Size = UDim2.fromOffset(ex1 - ex0, ey1 - ey0)
+	frame.ImageRectSize = Vector2.new(VIS_W, VIS_H)
+	frame.ResampleMode = PIXELATED and Enum.ResamplerMode.Pixelated or Enum.ResamplerMode.Default
+	frame.ImageContent = Content.fromObject(image)
+	frame.Parent = actor.Parent
+	BAND_BYTES = BAND_W * BAND_H * 4
+	buf = buffer.create(BAND_BYTES)
+	rz = Rasterizer.new(buf, BAND_W, BAND_H, sprites, fonts)
+	rz.background = background
+	bg, held, whole = nil, false, true
+	lx0, ly0, lx1, ly1 = BAND_W, BAND_H, -1, -1
+	table.clear(scratch)
+	nScratch = 0
+	layout = gen
+	actor:SetAttribute("Applied", gen)
+end
+
+configure(A("Layout"))
+
+actor:BindToMessage("layout", configure)
 actor:BindToMessage("sprite", function(id, bytes, sw, sh)
 	sprites[id] = { Width = sw, Height = sh, Buffer = buffer.fromstring(bytes) }
 	rz:forget()
@@ -124,6 +156,7 @@ local function stop()
 		image:Destroy()
 		image = nil
 	end
+	frame:Destroy()
 end
 actor.Destroying:Connect(stop)
 actor.AncestryChanged:Connect(function(_, parent)
@@ -132,6 +165,8 @@ end)
 
 frameConn = RunService.RenderStepped:ConnectParallel(function()
 	if not alive or script.Parent ~= actor or actor.Parent == nil then return end
+	local drawn = layout
+	if ST.layout ~= drawn then return end
 	local fid = ST.frame
 	if fid == nil or fid == lastFrame then
 		return
@@ -187,7 +222,7 @@ frameConn = RunService.RenderStepped:ConnectParallel(function()
 	if not alive or script.Parent ~= actor or actor.Parent == nil then return end
 	if not pcall(task.synchronize) then return end
 	local target = image
-	if not alive or target == nil then return end
+	if not alive or target == nil or layout ~= drawn then return end
 	local ok, err
 	if src == buf then
 		ok, err = pcall(target.WritePixelsBuffer, target, Vector2.zero, imgSize, buf)

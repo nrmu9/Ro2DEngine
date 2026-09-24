@@ -37,9 +37,11 @@ local frameId = 0
 
 local spriteReg, spriteList = {}, {}
 local fontReg, fontList = {}, {}
-local nextAssetId = 1
+local nextSpriteId, nextFontId = 1, 1
 local workers = {}
 local lastReady = 0
+local layoutGen = 0
+local cbPool = {}
 
 local function broadcastSprite(id, sprite)
 	local bytes = buffer.tostring(sprite.Buffer)
@@ -64,8 +66,8 @@ end
 local function spriteIdOf(sprite)
 	local id = spriteReg[sprite]
 	if not id then
-		id = nextAssetId
-		nextAssetId += 1
+		id = nextSpriteId
+		nextSpriteId += 1
 		spriteReg[sprite] = id
 		spriteList[id] = sprite
 		broadcastSprite(id, sprite)
@@ -75,8 +77,8 @@ end
 local function fontIdOf(font)
 	local id = fontReg[font]
 	if not id then
-		id = nextAssetId
-		nextAssetId += 1
+		id = nextFontId
+		nextFontId += 1
 		fontReg[font] = id
 		fontList[id] = font
 		broadcastFont(id, font)
@@ -403,25 +405,16 @@ function PR.Draw.Text(x, y, text, font, opts)
 end
 
 local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, offY, pixelated, workerCount)
-	for i = 1, #workers do
-		workers[i].actor:Destroy()
-	end
-	for _, ch in canvasFrame:GetChildren() do
-		if ch:IsA("ImageLabel") and string.sub(ch.Name, 1, 8) == "PWorker_" then
-			ch:Destroy()
-		end
-	end
-	table.clear(workers)
 	for i = 1, nBands do ST["c" .. i] = nil end
+	for i = 1, nBands do cbPool[i] = bands[i].cb end
 	bgHeld, bgAtOpen = false, false
 	table.clear(bands)
 	nBands = 0
 	table.clear(spriteReg)
 	table.clear(spriteList)
-	table.clear(fontReg)
-	table.clear(fontList)
-	nextAssetId = 1
-	lastReady = 0
+	nextSpriteId = 1
+	local prevGen = layoutGen
+	layoutGen += 1
 
 	table.clear(grid)
 	cols = max(1, ceil(targetW / 1024))
@@ -440,11 +433,15 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 				local vw, vh = bw, bh
 				bw += min(over, targetW - bx - bw)
 				bh += min(over, targetH - by - bh)
-				local a = template:Clone()
 				nBands += 1
-				bands[nBands] = { x0 = bx, y0 = by, x1 = bx + bw - 1, y1 = by + bh - 1,
-					cb = CommandBuffer.new() }
+				local cb = cbPool[nBands] or CommandBuffer.new()
+				cb:reset()
+				bands[nBands] = { x0 = bx, y0 = by, x1 = bx + bw - 1, y1 = by + bh - 1, cb = cb }
 				grid[r * cols + c + 1] = bands[nBands]
+				local prior = workers[nBands] and workers[nBands].actor
+				local kept = prior ~= nil and prior.Parent == canvasFrame and prior:GetAttribute("Applied") == prevGen
+				if prior and not kept then prior:Destroy() end
+				local a = if kept then prior else template:Clone()
 				a:SetAttribute("BandIndex", nBands)
 				a:SetAttribute("BandX", bx)
 				a:SetAttribute("BandY", by)
@@ -456,10 +453,19 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 				a:SetAttribute("OffsetX", offX)
 				a:SetAttribute("OffsetY", offY)
 				a:SetAttribute("Pixelated", pixelated and 1 or 0)
-				a.Parent = canvasFrame
-				workers[#workers + 1] = { actor = a }
+				a:SetAttribute("Layout", layoutGen)
+				if kept then
+					a:SendMessage("layout", layoutGen)
+				else
+					a.Parent = canvasFrame
+					workers[nBands] = { actor = a }
+				end
 			end
 		end
+	end
+	for i = #workers, nBands + 1, -1 do
+		workers[i].actor:Destroy()
+		workers[i] = nil
 	end
 end
 
@@ -534,6 +540,7 @@ function PR.System.Init(canvasFrame, config)
 		end
 		ST.camX = 0
 		ST.camY = 0
+		ST.layout = layoutGen
 		if openedAt == stepId then
 			ST.keep = bgAtOpen
 		else
