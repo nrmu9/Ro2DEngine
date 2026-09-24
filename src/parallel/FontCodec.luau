@@ -1,4 +1,5 @@
 --!optimize 2
+--!native
 
 local buffer = buffer
 local floor = math.floor
