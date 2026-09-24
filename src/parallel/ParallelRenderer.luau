@@ -84,8 +84,16 @@ local function fontIdOf(font)
 	return id
 end
 
-local function only()
-	return nBands == 1 and bands[1].cb or nil
+local grid, cols, rows, tileW, tileH, over = {}, 1, 1, 1, 1, 1
+
+local function span(ax: number, ay: number, bx: number, by: number): (number, number, number, number)
+	local r0, r1 = (ay - over) // tileH, by // tileH
+	if r0 < 0 then r0 = 0 end
+	if r1 >= rows then r1 = rows - 1 end
+	local c0, c1 = (ax - over) // tileW, bx // tileW
+	if c0 < 0 then c0 = 0 end
+	if c1 >= cols then c1 = cols - 1 end
+	return r0, r1, c0, c1
 end
 
 local stepId, openedAt = 0, -1
@@ -102,83 +110,93 @@ end
 
 function PR.Draw.Clear(r, g, b, a)
 	if not PR.IsReady then return end
-	openFrame()
+	if openedAt ~= stepId then openFrame() end
 	for i = 1, nBands do bands[i].cb:clear(r, g, b, a) end
 end
 function PR.Draw.SetClip(x, y, w, h)
 	if not PR.IsReady then return end
-	openFrame()
+	if openedAt ~= stepId then openFrame() end
 	if w <= 0 or h <= 0 then
 		for i = 1, nBands do bands[i].cb:clip(0, 0, -1, -1) end
 		return
 	end
-	local z = PR.Camera.Zoom
+	local cam = PR.Camera
+	local z = cam.Zoom
 	if z ~= 1 then
 		local x1, y1 = zoomed(x + w, y + h, z)
 		x, y = zoomed(x, y, z)
 		w, h = x1 - x, y1 - y
 	end
-	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
+	local x0, y0 = x - cam.X, y - cam.Y
 	for i = 1, nBands do bands[i].cb:clip(x0, y0, x0 + w - 1, y0 + h - 1) end
 end
 function PR.Draw.ClearClip()
 	if not PR.IsReady then return end
-	openFrame()
+	if openedAt ~= stepId then openFrame() end
 	for i = 1, nBands do bands[i].cb:clip(0, 0, PR.Width - 1, PR.Height - 1) end
 end
 function PR.Draw.Rect(x, y, w, h, r, g, b, a)
 	if not PR.IsReady then return end
-	openFrame()
-	local z = PR.Camera.Zoom
+	if openedAt ~= stepId then openFrame() end
+	local cam = PR.Camera
+	local z = cam.Zoom
 	if z ~= 1 then
 		local x1, y1 = zoomed(x + w, y + h, z)
 		x, y = zoomed(x, y, z)
 		w, h = max(1, x1 - x), max(1, y1 - y)
 	end
-	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
-	local one = only()
-	if one then
-		one:rect(x0, y0, w, h, r, g, b, a)
+	local x0, y0 = x - cam.X, y - cam.Y
+	if nBands == 1 then
+		bands[1].cb:rect(x0, y0, w, h, r, g, b, a)
 		return
 	end
 	local ax, ay, bx, by = DrawBounds.rect(x0, y0, w, h)
-	for i = 1, nBands do
-		local bd = bands[i]
-		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:rect(x0, y0, w, h, r, g, b, a)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:rect(x0, y0, w, h, r, g, b, a)
+			end
 		end
 	end
 end
 function PR.Draw.RectRotated(x, y, w, h, angle, r, g, b, a)
 	if not PR.IsReady then return end
-	openFrame()
-	local z = PR.Camera.Zoom
+	if openedAt ~= stepId then openFrame() end
+	local cam = PR.Camera
+	local z = cam.Zoom
 	if z ~= 1 then
 		x, y = zoomed(x, y, z)
 		w, h = w * z, h * z
 	end
-	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
-	local one = only()
-	if one then
-		one:rectRot(x0, y0, w, h, angle, r, g, b, a)
+	local x0, y0 = x - cam.X, y - cam.Y
+	if nBands == 1 then
+		bands[1].cb:rectRot(x0, y0, w, h, angle, r, g, b, a)
 		return
 	end
 	local ax, ay, bx, by = DrawBounds.rectRot(x0, y0, w, h)
-	for i = 1, nBands do
-		local bd = bands[i]
-		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:rectRot(x0, y0, w, h, angle, r, g, b, a)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:rectRot(x0, y0, w, h, angle, r, g, b, a)
+			end
 		end
 	end
 end
 function PR.Draw.BeginPoints()
 	if not PR.IsReady then return end
-	openFrame()
+	if openedAt ~= stepId then openFrame() end
 	for i = 1, nBands do bands[i].cb:beginPoints() end
 end
 function PR.Draw.Point(x, y, size, r, g, b, a)
 	if not PR.IsReady then return end
-	local z = PR.Camera.Zoom
+	local cam = PR.Camera
+	local z = cam.Zoom
 	if z ~= 1 then
 		x, y = zoomed(x, y, z)
 		size = max(1, size * z)
@@ -186,19 +204,22 @@ function PR.Draw.Point(x, y, size, r, g, b, a)
 	local s = floor(size)
 	if s <= 0 then return end
 	if s > 255 then s = 255 end
-	local x0 = x - s * 0.5 - PR.Camera.X
-	local y0 = y - s * 0.5 - PR.Camera.Y
+	local x0 = x - s * 0.5 - cam.X
+	local y0 = y - s * 0.5 - cam.Y
 	a = a or 255
-	local one = only()
-	if one then
-		one:point(x0, y0, s, r, g, b, a)
+	if nBands == 1 then
+		bands[1].cb:point(x0, y0, s, r, g, b, a)
 		return
 	end
 	local ax, ay, bx, by = DrawBounds.point(x0, y0, s)
-	for i = 1, nBands do
-		local bd = bands[i]
-		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:point(x0, y0, s, r, g, b, a)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:point(x0, y0, s, r, g, b, a)
+			end
 		end
 	end
 end
@@ -208,51 +229,59 @@ function PR.Draw.EndPoints()
 end
 function PR.Draw.Sprite(x, y, sprite, flipX, flipY)
 	if not (PR.IsReady and sprite) then return end
-	if PR.Camera.Zoom ~= 1 then
+	local cam = PR.Camera
+	if cam.Zoom ~= 1 then
 		spriteOpts.FlipX, spriteOpts.FlipY = flipX == true, flipY == true
 		PR.Draw.SpriteEx(x + sprite.Width * 0.5, y + sprite.Height * 0.5, sprite, spriteOpts)
 		return
 	end
-	openFrame()
-	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
-	local id = spriteIdOf(sprite)
-	local one = only()
-	if one then
-		one:sprite(x0, y0, id, flipX, flipY)
+	if openedAt ~= stepId then openFrame() end
+	local x0, y0 = x - cam.X, y - cam.Y
+	local id = spriteReg[sprite] or spriteIdOf(sprite)
+	if nBands == 1 then
+		bands[1].cb:sprite(x0, y0, id, flipX, flipY)
 		return
 	end
 	local ax, ay, bx, by = DrawBounds.sprite(x0, y0, sprite.Width, sprite.Height)
-	for i = 1, nBands do
-		local bd = bands[i]
-		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:sprite(x0, y0, id, flipX, flipY)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:sprite(x0, y0, id, flipX, flipY)
+			end
 		end
 	end
 end
 function PR.Draw.SpriteEx(x, y, sprite, opts)
 	if not (PR.IsReady and sprite) then return end
-	openFrame()
+	if openedAt ~= stepId then openFrame() end
 	opts = opts or {}
 	local scale, rot = opts.Scale or 1, opts.Rotation or 0
-	local z = PR.Camera.Zoom
+	local cam = PR.Camera
+	local z = cam.Zoom
 	if z ~= 1 then
 		x, y = zoomed(x, y, z)
 		scale *= z
 	end
 	local tr, tg, tb = opts.TintR or 255, opts.TintG or 255, opts.TintB or 255
 	local al = opts.Alpha or 255
-	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
-	local id = spriteIdOf(sprite)
-	local one = only()
-	if one then
-		one:spriteEx(x0, y0, id, scale, rot, tr, tg, tb, al, opts.FlipX, opts.FlipY)
+	local x0, y0 = x - cam.X, y - cam.Y
+	local id = spriteReg[sprite] or spriteIdOf(sprite)
+	if nBands == 1 then
+		bands[1].cb:spriteEx(x0, y0, id, scale, rot, tr, tg, tb, al, opts.FlipX, opts.FlipY)
 		return
 	end
 	local ax, ay, bx, by = DrawBounds.spriteEx(x0, y0, sprite.Width, sprite.Height, scale, rot)
-	for i = 1, nBands do
-		local bd = bands[i]
-		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:spriteEx(x0, y0, id, scale, rot, tr, tg, tb, al, opts.FlipX, opts.FlipY)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:spriteEx(x0, y0, id, scale, rot, tr, tg, tb, al, opts.FlipX, opts.FlipY)
+			end
 		end
 	end
 end
@@ -261,47 +290,55 @@ function PR.Draw.Pixel(x, y, r, g, b, a)
 end
 function PR.Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)
 	if not PR.IsReady then return end
-	openFrame()
-	local z = PR.Camera.Zoom
+	if openedAt ~= stepId then openFrame() end
+	local cam = PR.Camera
+	local z = cam.Zoom
 	if z ~= 1 then
 		x0, y0 = zoomed(x0, y0, z)
 		x1, y1 = zoomed(x1, y1, z)
 		thickness *= z
 	end
-	local ax0, ay0 = x0 - PR.Camera.X, y0 - PR.Camera.Y
-	local ax1, ay1 = x1 - PR.Camera.X, y1 - PR.Camera.Y
-	local one = only()
-	if one then
-		one:line(ax0, ay0, ax1, ay1, thickness, r, g, b)
+	local ax0, ay0 = x0 - cam.X, y0 - cam.Y
+	local ax1, ay1 = x1 - cam.X, y1 - cam.Y
+	if nBands == 1 then
+		bands[1].cb:line(ax0, ay0, ax1, ay1, thickness, r, g, b)
 		return
 	end
 	local ax, ay, bx, by = DrawBounds.line(ax0, ay0, ax1, ay1, thickness)
-	for i = 1, nBands do
-		local bd = bands[i]
-		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:line(ax0, ay0, ax1, ay1, thickness, r, g, b)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:line(ax0, ay0, ax1, ay1, thickness, r, g, b)
+			end
 		end
 	end
 end
 function PR.Draw.CircleSDF(x, y, radius, r, g, b, a)
 	if not PR.IsReady then return end
-	openFrame()
-	local z = PR.Camera.Zoom
+	if openedAt ~= stepId then openFrame() end
+	local cam = PR.Camera
+	local z = cam.Zoom
 	if z ~= 1 then
 		x, y = zoomed(x, y, z)
 		radius *= z
 	end
-	local cx, cy = x - PR.Camera.X, y - PR.Camera.Y
-	local one = only()
-	if one then
-		one:circle(cx, cy, radius, r, g, b, a)
+	local cx, cy = x - cam.X, y - cam.Y
+	if nBands == 1 then
+		bands[1].cb:circle(cx, cy, radius, r, g, b, a)
 		return
 	end
 	local ax, ay, bx, by = DrawBounds.circle(cx, cy, radius)
-	for i = 1, nBands do
-		local bd = bands[i]
-		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:circle(cx, cy, radius, r, g, b, a)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:circle(cx, cy, radius, r, g, b, a)
+			end
 		end
 	end
 end
@@ -318,13 +355,14 @@ function PR.Draw.MeasureText(text, font, scale)
 end
 function PR.Draw.Text(x, y, text, font, opts)
 	if not (PR.IsReady and font and text) then return end
-	openFrame()
+	if openedAt ~= stepId then openFrame() end
 	local s = tostring(text)
 	if s == "" then return end
 	opts = opts or {}
 	local scale = opts.Scale or 1
 	if scale <= 0 then return end
-	local z = PR.Camera.Zoom
+	local cam = PR.Camera
+	local z = cam.Zoom
 	if z ~= 1 then
 		x, y = zoomed(x, y, z)
 		scale *= z
@@ -341,22 +379,25 @@ function PR.Draw.Text(x, y, text, font, opts)
 	if opts.VAlign == "center" then
 		y -= (font.CapCenter or 0) * scale
 	end
-	local id = fontIdOf(font)
+	local id = fontReg[font] or fontIdOf(font)
 	local tr, tg, tb = opts.TintR or 255, opts.TintG or 255, opts.TintB or 255
 	local al = opts.Alpha or 255
-	local x0, y0 = x - PR.Camera.X, y - PR.Camera.Y
-	local one = only()
-	if one then
-		one:text(x0, y0, s, id, scale, tr, tg, tb, al)
+	local x0, y0 = x - cam.X, y - cam.Y
+	if nBands == 1 then
+		bands[1].cb:text(x0, y0, s, id, scale, tr, tg, tb, al)
 		return
 	end
 	if width == nil then width = PR.Draw.MeasureText(s, font, scale) end
 	local lo, hi = DrawBounds.textVSpan(s, font)
 	local ax, ay, bx, by = DrawBounds.text(x0, y0, width, scale, lo, hi)
-	for i = 1, nBands do
-		local bd = bands[i]
-		if bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
-			bd.cb:text(x0, y0, s, id, scale, tr, tg, tb, al)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:text(x0, y0, s, id, scale, tr, tg, tb, al)
+			end
 		end
 	end
 end
@@ -382,11 +423,12 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 	nextAssetId = 1
 	lastReady = 0
 
-	local cols = max(1, ceil(targetW / 1024))
-	local rows = max(ceil(targetH / 1024), ceil(workerCount / cols))
-	local tileW = ceil(targetW / cols)
-	local tileH = ceil(targetH / rows)
-	local over = max(1, ceil(1 / max(displayScale, 1e-3)))
+	table.clear(grid)
+	cols = max(1, ceil(targetW / 1024))
+	rows = max(ceil(targetH / 1024), ceil(workerCount / cols))
+	tileW = ceil(targetW / cols)
+	tileH = ceil(targetH / rows)
+	over = max(1, ceil(1 / max(displayScale, 1e-3)))
 
 	local template = engine:WaitForChild("parallel"):WaitForChild("WorkerActor")
 	for r = 0, rows - 1 do
@@ -402,6 +444,7 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 				nBands += 1
 				bands[nBands] = { x0 = bx, y0 = by, x1 = bx + bw - 1, y1 = by + bh - 1,
 					cb = CommandBuffer.new() }
+				grid[r * cols + c + 1] = bands[nBands]
 				a:SetAttribute("BandIndex", nBands)
 				a:SetAttribute("BandX", bx)
 				a:SetAttribute("BandY", by)

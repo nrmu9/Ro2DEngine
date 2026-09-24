@@ -15,6 +15,37 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   zoom of one, as it is drawn at a camera of nought. One is the default, and a
   draw at one is where it always was.
 
+### Changed
+- The threaded renderer's workers draw four to ten times faster, with the same
+  pixels to the byte. Roblox clients run Luau in the interpreter (native code
+  generation is for servers and Studio), where a pixel written in a loop costs
+  as much as twenty bytes moved by one `buffer.copy`, and the workers wrote
+  almost everything a pixel at a time: a menu took 60 to 130 ms of worker time
+  a frame, and a fight about 75. Measured on recorded frames of a real game, a
+  menu now takes 8 to 17 ms and a fight 13, over eight bands.
+  - A solid rect, the solid middle of each row of a turned rect and of a
+    circle, and a sprite's opaque runs are copied as spans rather than written
+    a pixel at a time; a rect as wide as a band is one span doubled over itself.
+  - A see-through fill remembers the last colour it made, copies a row that is
+    the same as the one above it, and fills a stretch of one colour in one go.
+    A tint or fade over the whole screen does the same.
+  - Each sprite is kept blended over the frame's clear colour, so a row of a
+    sprite drawn over nothing but that colour is one copy, soft edge and all.
+  - A scaled sprite walks the runs of one colour in its rows rather than every
+    pixel of its box, so the empty middle of a ring costs nothing.
+  - A glyph's coverage at a scale is worked out once and kept.
+  - Text, scaled or tinted sprites and see-through rects are remembered by what
+    was drawn and what was under it. Drawn again over the same pixels, the
+    result is pasted back rather than worked out; anything drawn underneath in
+    the meantime is noticed, and it is drawn again. A memory unused for a couple
+    of frames is let go, and what a band keeps is bounded.
+- A band whose command stream is byte for byte the last frame's is neither
+  drawn nor uploaded again, so a screen at rest costs the workers nothing.
+- A draw call costs the main thread about a third less: the bands a command
+  reaches are found from the band grid rather than by testing every band, and
+  the frame's bookkeeping is done in line. A band's stream is copied once when
+  it is published rather than twice.
+
 ## [0.7.4] - 2026-09-23
 
 ### Fixed
