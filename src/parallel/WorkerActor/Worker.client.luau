@@ -95,11 +95,17 @@ local function roundUp(n, cap)
 	return p < cap and p or cap
 end
 
+local lastBytes, lastHeld, lastCamX, lastCamY, shown = nil, false, 0, 0, false
+
 actor:BindToMessage("sprite", function(id, bytes, sw, sh)
 	sprites[id] = { Width = sw, Height = sh, Buffer = buffer.fromstring(bytes) }
+	rz:forget()
+	lastBytes = nil
 end)
 actor:BindToMessage("font", function(id, encoded)
 	fonts[id] = FontCodec.decode(encoded)
+	rz:forget()
+	lastBytes = nil
 end)
 
 local ST = SharedTableRegistry:GetSharedTable("Ro2D_Frame")
@@ -136,6 +142,9 @@ frameConn = RunService.RenderStepped:ConnectParallel(function()
 	end
 	lastFrame = fid
 	if held and not ST.keep then held = false end
+	local camX, camY = ST.camX, ST.camY
+	if shown and bytes == lastBytes and held == lastHeld and camX == lastCamX and camY == lastCamY then return end
+	lastBytes, lastHeld, lastCamX, lastCamY, shown = bytes, held, camX, camY, false
 	if held then
 		if lx0 <= lx1 then
 			local rowBytes = (lx1 - lx0 + 1) * 4
@@ -149,7 +158,7 @@ frameConn = RunService.RenderStepped:ConnectParallel(function()
 		whole = true
 	end
 	rz:resetDirty()
-	rz:setOffset(ST.camX + BAND_X, ST.camY + BAND_Y)
+	rz:setOffset(camX + BAND_X, camY + BAND_Y)
 	rz:resetClip()
 	CommandBuffer.decode(bytes, rz)
 	local ux, uy, uw, uh = 0, 0, BAND_W, BAND_H
@@ -157,7 +166,10 @@ frameConn = RunService.RenderStepped:ConnectParallel(function()
 		local x0, y0 = math.min(lx0, rz.dx0), math.min(ly0, rz.dy0)
 		local x1, y1 = math.max(lx1, rz.dx1), math.max(ly1, rz.dy1)
 		lx0, ly0, lx1, ly1 = rz.dx0, rz.dy0, rz.dx1, rz.dy1
-		if x0 > x1 or y0 > y1 then return end
+		if x0 > x1 or y0 > y1 then
+			shown = true
+			return
+		end
 		uw, uh = roundUp(x1 - x0 + 1, BAND_W), roundUp(y1 - y0 + 1, BAND_H)
 		ux = x0 + uw > BAND_W and BAND_W - uw or x0
 		uy = y0 + uh > BAND_H and BAND_H - uh or y0
@@ -182,6 +194,7 @@ frameConn = RunService.RenderStepped:ConnectParallel(function()
 	else
 		ok, err = pcall(target.WritePixelsBuffer, target, Vector2.new(ux, uy), Vector2.new(uw, uh), src)
 	end
+	shown = ok
 	if not ok and not writeWarned then
 		writeWarned = true
 		local first = false
