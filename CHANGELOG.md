@@ -16,13 +16,14 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   draw at one is where it always was.
 
 ### Changed
-- The threaded renderer's workers draw four to ten times faster, with the same
-  pixels to the byte. Roblox clients run Luau in the interpreter (native code
-  generation is for servers and Studio), where a pixel written in a loop costs
-  as much as twenty bytes moved by one `buffer.copy`, and the workers wrote
-  almost everything a pixel at a time: a menu took 60 to 130 ms of worker time
-  a frame, and a fight about 75. Measured on recorded frames of a real game, a
-  menu now takes 8 to 17 ms and a fight 13, over eight bands.
+- The threaded renderer's workers draw four to ten times faster when Luau is
+  interpreted and about four times faster with native code, with the same
+  pixels to the byte. Interpreted, a pixel written in a loop costs as much as
+  twenty bytes moved by one `buffer.copy`, and the workers wrote almost
+  everything a pixel at a time: a menu took 60 to 130 ms of worker time a frame,
+  and a fight about 75. Measured on recorded frames of a real game over eight
+  bands, a menu now takes 8 to 17 ms and a fight 13 interpreted; with native
+  code a fight went from 16 ms to 4.
   - A solid rect, the solid middle of each row of a turned rect and of a
     circle, and a sprite's opaque runs are copied as spans rather than written
     a pixel at a time; a rect as wide as a band is one span doubled over itself.

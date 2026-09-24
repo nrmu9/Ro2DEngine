@@ -14,11 +14,12 @@ spatial UI, without the overhead of the Roblox GUI system.
 * **Pooled uploads.** Upload buffers are recycled from an internal pool, so a
   frame's uploads allocate nothing. Pixels are read and written 32 bits at a
   time (one RGBA value per buffer op) rather than byte by byte.
-* **Built for the interpreter.** Roblox clients run Luau without native code, so
-  the rasterizer works in spans rather than pixels wherever it can: solid fills
-  and opaque sprite runs are `buffer.copy` calls, a see-through fill reuses the
-  colour it made last and copies rows that repeat, sprites are kept pre-blended
-  over the clear colour, and glyph coverage is cached per scale.
+* **Fast with or without native code.** Some clients run Luau interpreted, where
+  a pixel written in a loop is the main cost, so the rasterizer works in spans
+  rather than pixels wherever it can: solid fills and opaque sprite runs are
+  `buffer.copy` calls, a see-through fill reuses the colour it made last and
+  copies rows that repeat, sprites are kept pre-blended over the clear colour,
+  and glyph coverage is cached per scale.
 * **Frame-to-frame memory.** Text, scaled or tinted sprites and see-through
   rects are pasted back when neither they nor the pixels under them have
   changed, and a band whose commands are exactly last frame's is not drawn or
