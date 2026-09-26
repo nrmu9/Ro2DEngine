@@ -4,6 +4,19 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `Input.SetPointerParked(true)` puts the gamepad's cursor away where it is,
+  for a game whose d-pad walks a focus of its own. A parked cursor is hidden,
+  the pointer reads as off the screen, and the A button is not its click, even
+  if the cursor comes back before A is let go. Moving the left stick brings it
+  back where it was rather than in the middle of the screen, and putting the pad
+  down forgets it. `Input.IsPointerParked()` says whether it is parked. Without
+  it a game with a focus had two pointers on a pad, and A pressed both: the focus
+  as it went down, and whatever the cursor rested on as it came up. A cursor
+  hidden by `SetPointerVisible(false)` can be parked too, and is shown parked.
+
 ## [0.8.1] - 2026-09-26
 
 ### Fixed

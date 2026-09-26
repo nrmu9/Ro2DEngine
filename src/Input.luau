@@ -31,6 +31,7 @@ local Input = {
 	PadCursorY = 0,
 	PadDown = false,
 	PointerVisible = true,
+	PointerParked = false,
 }
 
 local keysDown = Input.KeysDown
@@ -46,7 +47,7 @@ local ptr, ptrShown, ptrEnded = nil, false, false
 local pend, pendEnded = nil, false
 local touchDown, touchX, touchY, touchLast = false, 0, 0, false
 local padInit = false
-local prevShow = false
+local prevLive = false
 local lastClock = os.clock()
 local GAMEPAD_SPEED = 1100
 
@@ -200,7 +201,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	elseif t == MB3 then key, device = "MouseMiddleButton", "kbm" end
 	if key and Actions.press(key, device, gameProcessed) then return end
 	if isPad then padHeld[input.KeyCode] = true end
-	if input.KeyCode == BUTTON_A then Input.PadDown = true end
+	if input.KeyCode == BUTTON_A then Input.PadDown = not Input.PointerParked end
 	if gameProcessed then return end
 	if t == KEYBOARD then
 		keysDown[input.KeyCode] = true
@@ -336,13 +337,15 @@ function Input.Flush()
 	local dt = math.min(now - lastClock, 0.1)
 	lastClock = now
 	pollPads(now)
-	local show = Input.GamepadActive and Input.PointerVisible
-	if show and not prevShow then centerCursor() end
-	prevShow = show
-	if show then
+	local live = Input.GamepadActive and Input.PointerVisible
+	if live and not prevLive then centerCursor() end
+	prevLive = live
+	if not Input.GamepadActive then Input.PointerParked = false end
+	if live then
 		if not padInit then centerCursor() end
 		local sx, sy = readStick()
 		if sx * sx + sy * sy > 0.0225 then
+			Input.PointerParked = false
 			local cam = workspace.CurrentCamera
 			local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
 			Input.PadCursorX = math.clamp(Input.PadCursorX + sx * GAMEPAD_SPEED * dt, 0, vp.X)
@@ -350,6 +353,7 @@ function Input.Flush()
 		end
 		ensureCursor()
 	end
+	local show = live and not Input.PointerParked
 	if cursorGui then
 		cursorGui.Enabled = show
 		if show and cursorDot then

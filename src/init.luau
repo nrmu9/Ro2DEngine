@@ -196,7 +196,10 @@ local DEFAULT_WORKERS = 4
 local inputLocked = false
 local function rawMousePos()
 	local sx, sy = mouse.X, mouse.Y
-	if Input.GamepadActive then sx, sy = Input.PadCursorX, Input.PadCursorY end
+	if Input.GamepadActive then
+		if Input.PointerParked then return -100000, -100000 end
+		sx, sy = Input.PadCursorX, Input.PadCursorY
+	end
 	if activeIsParallel then
 		local inv = 1 / (ParallelRenderer._scale or 1)
 		return math.floor((sx - (ParallelRenderer._offX or 0)) * inv),
@@ -329,6 +332,8 @@ Ro2D = {
 		IsLocked = function() return inputLocked end,
 		IsGamepadActive = function() return Input.GamepadActive end,
 		SetPointerVisible = function(v) Input.PointerVisible = v ~= false end,
+		SetPointerParked = function(v) Input.PointerParked = v == true and Input.GamepadActive end,
+		IsPointerParked = function() return Input.PointerParked end,
 		Actions = Input.Actions,
 	},
 }

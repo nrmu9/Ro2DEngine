@@ -167,6 +167,13 @@ is the pointer, the pointer lets go for one frame, off the screen, then presses
 where the new finger is, so the handover clicks nothing under the first finger.
 A game that follows several fingers at once reads them from `UserInputService`.
 
+The gamepad's cursor moves with the left stick and clicks with A. A game whose
+d-pad walks a focus of its own parks the cursor with
+`Input.SetPointerParked(true)` as the focus moves: the cursor is hidden, the
+pointer reads as off the screen, and A is not its click, so A answers the focus
+alone. Moving the stick brings the cursor back where it was, and
+`Input.IsPointerParked()` says which of the two a pad is using.
+
 ## Input actions
 
 `Ro2D.Input.Actions` lets a game read input by name and let players change the
