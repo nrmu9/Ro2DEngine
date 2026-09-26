@@ -1,6 +1,7 @@
 --!optimize 2
 
 local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 
 local KEYBOARD = Enum.UserInputType.Keyboard
@@ -8,6 +9,7 @@ local MB1 = Enum.UserInputType.MouseButton1
 local MB2 = Enum.UserInputType.MouseButton2
 local MB3 = Enum.UserInputType.MouseButton3
 local WHEEL = Enum.UserInputType.MouseWheel
+local MOUSEMOVE = Enum.UserInputType.MouseMovement
 local TOUCH = Enum.UserInputType.Touch
 local PADS = {}
 for i = 1, 8 do
@@ -40,7 +42,9 @@ local mb1Down = false
 local mb3Down = false
 local padHeld = {}
 local sticks = { 0, 0, 0, 0 }
-local touchCount = 0
+local ptr, ptrShown, ptrEnded = nil, false, false
+local pend, pendEnded = nil, false
+local touchDown, touchX, touchY, touchLast = false, 0, 0, false
 local padInit = false
 local prevShow = false
 local lastClock = os.clock()
@@ -179,7 +183,10 @@ UserInputService.GamepadDisconnected:Connect(function()
 	activePad = firstPad()
 end)
 
-local touches = {}
+local function touchPos(input)
+	local inset = GuiService:GetGuiInset()
+	return input.Position.X + inset.X, input.Position.Y + inset.Y
+end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	local t = input.UserInputType
@@ -201,16 +208,21 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	elseif t == MB1 then
 		mb1Down = true
 		mouse.LeftDown = true
+		touchLast = touchLast and not UserInputService.MouseEnabled
 	elseif t == MB2 then
 		mouse.RightDown = true
+		touchLast = touchLast and not UserInputService.MouseEnabled
 	elseif t == MB3 then
 		mb3Down = true
+		touchLast = touchLast and not UserInputService.MouseEnabled
 	elseif t == TOUCH then
-		if not touches[input] then
-			touches[input] = true
-			touchCount += 1
+		touchLast = true
+		if ptr == nil and pend == nil then
+			ptr, ptrShown, ptrEnded = input, false, false
+			touchX, touchY = touchPos(input)
+		else
+			pend, pendEnded = input, false
 		end
-		mouse.LeftDown = true
 	end
 end)
 
@@ -222,17 +234,18 @@ UserInputService.InputEnded:Connect(function(input)
 		keysDown[input.KeyCode] = false
 	elseif t == MB1 then
 		mb1Down = false
-		mouse.LeftDown = touchCount > 0
+		mouse.LeftDown = touchDown
 	elseif t == MB2 then
 		mouse.RightDown = false
 	elseif t == MB3 then
 		mb3Down = false
 	elseif t == TOUCH then
-		if touches[input] then
-			touches[input] = nil
-			touchCount -= 1
+		if input == ptr then
+			ptrEnded = true
+			touchX, touchY = touchPos(input)
+		elseif input == pend then
+			pendEnded = true
 		end
-		mouse.LeftDown = mb1Down or touchCount > 0
 	end
 end)
 
@@ -259,23 +272,49 @@ local function verifyHeld()
 			end
 		end
 	end
-	if touchCount > 0 then
-		for obj in pairs(touches) do
-			local st = obj.UserInputState
-			if st ~= BEGIN and st ~= CHANGE then
-				touches[obj] = nil
-				touchCount -= 1
-			end
-		end
-		if touchCount < 0 then touchCount = 0 end
-	end
-	mouse.LeftDown = mb1Down or touchCount > 0
 	for kc, down in pairs(keysDown) do
 		if down and not UserInputService:IsKeyDown(kc) then keysDown[kc] = false end
 	end
 end
 
+local function stale(obj): boolean
+	local st = obj.UserInputState
+	return st ~= BEGIN and st ~= CHANGE
+end
+
+local function pointerStep()
+	if ptr and not ptrEnded and stale(ptr) then ptrEnded = true end
+	if pend and not pendEnded and stale(pend) then pendEnded = true end
+	local off = false
+	touchDown = false
+	if ptr then
+		if ptrEnded and ptrShown then
+			ptr = nil
+		elseif ptrEnded or not pend then
+			if not ptrEnded then touchX, touchY = touchPos(ptr) end
+			touchDown, ptrShown = true, true
+		else
+			ptr, off = nil, true
+		end
+	elseif pend then
+		ptr, ptrShown, ptrEnded = pend, true, pendEnded
+		pend, pendEnded = nil, false
+		touchX, touchY = touchPos(ptr)
+		touchDown = true
+	end
+	mouse.LeftDown = mb1Down or touchDown
+	if off then
+		mouse.X, mouse.Y = -100000, -100000
+	elseif touchLast then
+		mouse.X, mouse.Y = touchX, touchY
+	else
+		local pos = UserInputService:GetMouseLocation()
+		mouse.X, mouse.Y = pos.X, pos.Y
+	end
+end
+
 UserInputService.InputChanged:Connect(function(input, gameProcessed)
+	if input.UserInputType == MOUSEMOVE and UserInputService.MouseEnabled then touchLast = false end
 	if gameProcessed then return end
 	if input.UserInputType == WHEEL then
 		wheelArriving += input.Position.Z
@@ -291,9 +330,7 @@ function Input.Flush()
 	mouse.ScrollDelta = wheelArriving
 	wheelArriving = 0
 	verifyHeld()
-	local pos = UserInputService:GetMouseLocation()
-	mouse.X = pos.X
-	mouse.Y = pos.Y
+	pointerStep()
 
 	local now = os.clock()
 	local dt = math.min(now - lastClock, 0.1)

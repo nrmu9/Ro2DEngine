@@ -4,6 +4,21 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- On a touchscreen the pointer was every finger at once: down while any finger
+  was, and wherever the last finger to move was. A thumb resting on a virtual
+  stick meant a tap anywhere else pressed nothing until every finger was off
+  the screen, and the pointer jumped to whichever finger had just moved. The
+  pointer is now the newest finger still down; the others neither move it nor
+  hold it down. When a finger lands while another is the pointer, the pointer
+  lets go for one frame, off the screen, so nothing under the first finger is
+  clicked by the handover, and presses where the new finger is on the next. A
+  tap that begins and ends inside one frame is still pressed for a frame and
+  let go on the next, and a finger the device cancels without an end is let
+  go. The mouse is unchanged.
+
 ## [0.8.0] - 2026-09-24
 
 ### Added

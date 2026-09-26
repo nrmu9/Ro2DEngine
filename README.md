@@ -157,6 +157,16 @@ back to `1` for a HUD drawn over it.
 `Assets.LoadSprite` and `Assets.LoadFont` cache their result per `ModuleScript`,
 so requiring the same asset again is free after the first decode.
 
+## Pointer and touch
+
+`Input.GetMousePosition()` and `Input.IsMouseDown(1)` are the pointer: the
+mouse, the gamepad's cursor, or on a touchscreen the newest finger still down.
+Other fingers neither move it nor hold it down, so a thumb resting on a stick
+does not stop a tap elsewhere from pressing. When a finger lands while another
+is the pointer, the pointer lets go for one frame, off the screen, then presses
+where the new finger is, so the handover clicks nothing under the first finger.
+A game that follows several fingers at once reads them from `UserInputService`.
+
 ## Input actions
 
 `Ro2D.Input.Actions` lets a game read input by name and let players change the
