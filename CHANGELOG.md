@@ -13,6 +13,12 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   row of background between them, moving as the camera moved. A zoomed rect is
   now as big as its rounded corners say, as the single-threaded renderer already
   had it, so rects that meet on the page meet on the screen.
+- Unzoomed, both renderers did the same to a rect's own fractional width and
+  height: a rect from 10.9 to 16.1 was drawn five pixels wide from 10, one
+  column short of 16. A shape filled with rects stopped short of its right and
+  bottom sides, and rects laid side by side left a column between them. A rect
+  now covers the pixels its corners fall in at any zoom. A rect with whole
+  corners draws as it did.
 
 ## [0.8.2] - 2026-09-26
 

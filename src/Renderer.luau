@@ -774,6 +774,10 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 		h = floor(y1 - Camera.Y) - floor(worldY - Camera.Y)
 		if w < 1 then w = 1 end
 		if h < 1 then h = 1 end
+	else
+		w = floor(worldX + w - Camera.X) - floor(worldX - Camera.X)
+		h = floor(worldY + h - Camera.Y) - floor(worldY - Camera.Y)
+		if w < 1 or h < 1 then return end
 	end
 
 	local x0 = floor(worldX - Camera.X)
