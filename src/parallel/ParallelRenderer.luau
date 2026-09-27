@@ -145,7 +145,8 @@ function PR.Draw.Rect(x, y, w, h, r, g, b, a)
 	if z ~= 1 then
 		local x1, y1 = zoomed(x + w, y + h, z)
 		x, y = zoomed(x, y, z)
-		w, h = max(1, x1 - x), max(1, y1 - y)
+		w = max(1, floor(x1 - cam.X) - floor(x - cam.X))
+		h = max(1, floor(y1 - cam.Y) - floor(y - cam.Y))
 	end
 	local x0, y0 = x - cam.X, y - cam.Y
 	if nBands == 1 then

@@ -4,6 +4,16 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- With the camera zoomed, the parallel renderer handed its workers a rect's
+  zoomed size as a fraction, and they dropped the fraction. Rects laid edge to
+  edge, as a filled shape is drawn a band at a time, came out as stripes with a
+  row of background between them, moving as the camera moved. A zoomed rect is
+  now as big as its rounded corners say, as the single-threaded renderer already
+  had it, so rects that meet on the page meet on the screen.
+
 ## [0.8.2] - 2026-09-26
 
 ### Added
