@@ -121,6 +121,7 @@ export type Ro2DAPI = {
 		SetTint: (r: number, g: number, b: number, alpha: number) -> (),
 		SetFade: (alpha: number) -> (),
 		SetResolution: (res: Vector2?, fill: boolean?) -> (),
+		ImageError: () -> string?,
 	},
 	Draw: {
 		Pixel: (worldX: number, worldY: number, r: number, g: number, b: number, a: number?) -> (),
@@ -257,6 +258,7 @@ local function systemSetOverlay(fn)
 	applyOverlay()
 end
 local function noFade() end
+local function noImageError(): string? return nil end
 local systemInit
 
 local DRAW, SYSTEM = {}, {}
@@ -270,6 +272,7 @@ local function bindBackend(be)
 	SYSTEM.Init = systemInit
 	SYSTEM.SetOverlay = systemSetOverlay
 	if SYSTEM.SetFade == nil then SYSTEM.SetFade = noFade end
+	if SYSTEM.ImageError == nil then SYSTEM.ImageError = noImageError end
 	if Ro2D then Ro2D.Compute = be.Compute or ComputeStub end
 end
 

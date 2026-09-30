@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `System.ImageError()` says why part of the canvas has no image to draw into,
+  or `nil` while all of it has one. Roblox refuses an `EditableImage` once a
+  device has spent its memory budget on them, and the band or chunk that asked
+  stays empty; a worker only warned, once, so a game could not tell that part of
+  its screen was missing, let alone drop to a resolution the device can hold.
+  Both renderers answer it, and it clears once a resolution change has made the
+  images again.
+
 ### Fixed
 - The parallel renderer could ask for a band 1025 pixels wide: bands were split
   to be at most 1024 across and then widened by a pixel of overlap. At 2048

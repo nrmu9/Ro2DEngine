@@ -94,12 +94,14 @@ local function configure(gen)
 	end)
 	if not imgOk or made == nil then
 		frame.Parent = nil
+		actor:SetAttribute("ImageError", tostring(made))
 		if not imageWarned then
 			imageWarned = true
 			warn("[Ro2D] EditableImage unavailable, this worker will not draw: " .. tostring(made))
 		end
 		return
 	end
+	actor:SetAttribute("ImageError", nil)
 	image = made
 	CMD_KEY = "c" .. BAND_I
 	frame.Name = string.format("PWorker_%d_%d", BAND_X, BAND_Y)

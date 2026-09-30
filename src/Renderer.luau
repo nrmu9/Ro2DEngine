@@ -268,6 +268,12 @@ function Renderer.System.SetTint(r: number, g: number, b: number, alpha: number)
 	TintFrame.BackgroundTransparency = 1 - clamp(alpha, 0, 255) / 255
 end
 
+function Renderer.System.ImageError(): string?
+	local missing = Renderer.Grid.MissingImages
+	if missing > 0 then return ("%d canvas chunks got no image"):format(missing) end
+	return nil
+end
+
 function Renderer.System.ScreenToCanvas(screenX: number, screenY: number): (number, number)
 	local g = Renderer.Grid
 	local inv = 1 / g.DisplayScale

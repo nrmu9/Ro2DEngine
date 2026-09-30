@@ -157,6 +157,12 @@ back to `1` for a HUD drawn over it.
 `Assets.LoadSprite` and `Assets.LoadFont` cache their result per `ModuleScript`,
 so requiring the same asset again is free after the first decode.
 
+`System.ImageError()` answers why part of the canvas has nothing to draw into,
+or `nil` while every band and chunk has its image. Roblox refuses an
+`EditableImage` past a device's memory budget, and a part of the screen without
+one stays empty; a game that sees an answer can call `System.SetResolution` with
+a smaller size, which makes the images again.
+
 ## Pointer and touch
 
 `Input.GetMousePosition()` and `Input.IsMouseDown(1)` are the pointer: the

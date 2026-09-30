@@ -589,6 +589,15 @@ function PR.System.Init(canvasFrame, config)
 	end)
 end
 
+function PR.System.ImageError()
+	for i = 1, nBands do
+		local w = workers[i]
+		local err = w and w.actor:GetAttribute("ImageError")
+		if err then return err end
+	end
+	return nil
+end
+
 function PR.System.ScreenToCanvas(sx, sy)
 	local inv = 1 / (PR._scale or 1)
 	return floor((sx - (PR._offX or 0)) * inv), floor((sy - (PR._offY or 0)) * inv)
