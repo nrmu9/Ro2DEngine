@@ -4,6 +4,15 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- The parallel renderer could ask for a band 1025 pixels wide: bands were split
+  to be at most 1024 across and then widened by a pixel of overlap. At 2048
+  wide (576 rows filled across a 32:9 screen) the first band's image was
+  refused and that part of the screen never drew. Bands are split to leave
+  room for their overlap now, so none is wider or taller than 1024.
+
 ## [0.8.3] - 2026-09-27
 
 ### Fixed

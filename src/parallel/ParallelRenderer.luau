@@ -422,11 +422,11 @@ local function buildWorkers(canvasFrame, targetW, targetH, displayScale, offX, o
 	layoutGen += 1
 
 	table.clear(grid)
-	cols = max(1, ceil(targetW / 1024))
-	rows = max(ceil(targetH / 1024), ceil(workerCount / cols))
+	over = max(1, ceil(1 / max(displayScale, 1e-3)))
+	cols = max(1, ceil(targetW / (1024 - over)))
+	rows = max(ceil(targetH / (1024 - over)), ceil(workerCount / cols))
 	tileW = ceil(targetW / cols)
 	tileH = ceil(targetH / rows)
-	over = max(1, ceil(1 / max(displayScale, 1e-3)))
 
 	local template = engine:WaitForChild("parallel"):WaitForChild("WorkerActor")
 	for r = 0, rows - 1 do
