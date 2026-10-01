@@ -532,6 +532,68 @@ function Rasterizer:line(wx0, wy0, wx1, wy1, thickness, r, g, b)
 	Shapes.line(plot, ax, ay, bx, by, thickness, r, g, b, cx0, cy0, cx1, cy1)
 end
 
+local polyBuf, polyW, polyR, polyG, polyB = bcreate(4), 0, 0, 0, 0
+
+local function polyRun(x0: number, x1: number, y: number, pa: number)
+	local off = (y * polyW + x0) * 4
+	local n = x1 - x0 + 1
+	if pa >= 255 then
+		local packed = polyR + polyG * 256 + polyB * 65536 + 0xFF000000
+		if n >= SPAN then
+			bcopy(polyBuf, off, colorRow(packed, n), 0, n * 4)
+			return
+		end
+		for _ = 1, n do
+			writeu32(polyBuf, off, packed)
+			off += 4
+		end
+		return
+	end
+	blendSpan(polyBuf, off, n, polyR * pa, polyG * pa, polyB * pa, 255 - pa, -1, 0)
+end
+
+local function polyPixel(x: number, y: number, pa: number)
+	blendInto(polyBuf, (y * polyW + x) * 4, polyR, polyG, polyB, pa)
+end
+
+function Rasterizer:poly(src: buffer, off: number, n: number, r: number, g: number, b: number, a: number)
+	if not Shapes or n < 3 or a <= 0 then return end
+	local ox, oy = self.ox, self.oy
+	local cx0, cy0, cx1, cy1 = self.cx0, self.cy0, self.cx1, self.cy1
+	local minX, minY, maxX, maxY = HUGE, HUGE, -HUGE, -HUGE
+	for k = 0, n - 1 do
+		local x, y = readf32(src, off + k * 8), readf32(src, off + k * 8 + 4)
+		if x < minX then minX = x end
+		if x > maxX then maxX = x end
+		if y < minY then minY = y end
+		if y > maxY then maxY = y end
+	end
+	if not (minX <= maxX and minY <= maxY) or maxX - minX == HUGE or maxY - minY == HUGE then return end
+	local dx, dy = 0.5 - ox, 0.5 - oy
+	local x0, y0 = floor(minX + dx), floor(minY + dy)
+	local x1, y1 = ceil(maxX + dx), ceil(maxY + dy)
+	if x1 < cx0 or y1 < cy0 or x0 > cx1 or y0 > cy1 then return end
+	if x0 < cx0 then x0 = cx0 end
+	if y0 < cy0 then y0 = cy0 end
+	if x1 > cx1 then x1 = cx1 end
+	if y1 > cy1 then y1 = cy1 end
+	mark(self, x0, y0, x1, y1)
+	polyBuf, polyW, polyR, polyG, polyB = self.buf, self.w, r, g, b
+	if a < 255 and (x1 - x0 + 1) * (y1 - y0 + 1) >= MEMO_MIN then
+		local key = spack("<ddddddddd", ox, oy, cx0, cy0, cx1, cy1, r + g * 256 + b * 65536, a, n)
+			.. readstring(src, off, n * 8)
+		local e = memoSeen(self, key)
+		if e ~= nil then
+			local hit, rows = memoOpen(self, e, x0, y0, x1, y1)
+			if hit then return end
+			Shapes.polygon(src, off, n, dx, dy, cx0, cy0, cx1, cy1, a, polyRun, polyPixel)
+			if rows then memoClose(self, key, e, x0, y0, x1, y1, rows) end
+			return
+		end
+	end
+	Shapes.polygon(src, off, n, dx, dy, cx0, cy0, cx1, cy1, a, polyRun, polyPixel)
+end
+
 function Rasterizer:rectRot(wx, wy, w, h, angle, r, g, b, a)
 	if w <= 0 or h <= 0 then return end
 	local bw, buf = self.w, self.buf

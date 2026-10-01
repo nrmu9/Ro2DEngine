@@ -28,6 +28,10 @@ function DrawBounds.line(x0, y0, x1, y1, thickness): (number, number, number, nu
 	return min(x0, x1) - pad, min(y0, y1) - pad, max(x0, x1) + pad, max(y0, y1) + pad
 end
 
+function DrawBounds.poly(x0, y0, x1, y1): (number, number, number, number)
+	return x0 - 1, y0 - 1, x1 + 1, y1 + 1
+end
+
 function DrawBounds.sprite(x, y, w, h): (number, number, number, number)
 	return x, y, x + w, y + h
 end

@@ -839,6 +839,73 @@ function Draw.Rect(worldX: number, worldY: number, w: number, h: number, r: numb
 	end
 end
 
+local function spanAt(x0: number, x1: number, y: number, r: number, g: number, b: number, a: number)
+	if y < clipY0 or y > clipY1 then return end
+	if x0 < clipX0 then x0 = clipX0 end
+	if x1 > clipX1 then x1 = clipX1 end
+	if x1 < x0 then return end
+	local chunkRow = Chunks[y // CHUNK_SIZE]
+	if not chunkRow then return end
+	local localY = y % CHUNK_SIZE
+	local px = x0
+	while px <= x1 do
+		local chunk = chunkRow[px // CHUNK_SIZE]
+		local localX = px % CHUNK_SIZE
+		if chunk then
+			local spanEndLocal = min(chunk.Width - 1, localX + (x1 - px))
+			local count = spanEndLocal - localX + 1
+			if count <= 0 then return end
+			if a >= 255 then
+				fillU32(chunk.Buffer, (localY * chunk.Width + localX) * 4, count, r + g * 256 + b * 65536 + 0xFF000000)
+			else
+				local cw, buf, ia = chunk.Width, chunk.Buffer, 255 - a
+				for lx = localX, spanEndLocal do
+					local off = (localY * cw + lx) * 4
+					local dst = readu32(buf, off)
+					writeu32(buf, off,
+						(r * a + (dst % 256) * ia) // 255
+						+ ((g * a + (dst // 256 % 256) * ia) // 255) * 256
+						+ ((b * a + (dst // 65536 % 256) * ia) // 255) * 65536
+						+ 0xFF000000)
+				end
+			end
+			if localX < chunk.MinX then chunk.MinX = localX end
+			if spanEndLocal > chunk.MaxX then chunk.MaxX = spanEndLocal end
+			if localY < chunk.MinY then chunk.MinY = localY end
+			if localY > chunk.MaxY then chunk.MaxY = localY end
+			px += count
+		else
+			px += (CHUNK_SIZE - localX)
+		end
+	end
+end
+
+local polyPts = bcreate(512)
+local polyR, polyG, polyB = 0, 0, 0
+local function polyRun(x0: number, x1: number, y: number, pa: number)
+	spanAt(x0, x1, y, polyR, polyG, polyB, pa)
+end
+local function polyPixel(x: number, y: number, pa: number)
+	spanAt(x, x, y, polyR, polyG, polyB, pa)
+end
+
+function Draw.Polygon(xs: { number }, ys: { number }, r: number, g: number, b: number, a: number?, ox: number?, oy: number?, count: number?)
+	if not Grid.IsReady then return end
+	local n = min(count or #xs, #xs, #ys, 65535)
+	if n < 3 then return end
+	local dx, dy = ox or 0, oy or 0
+	if buffer.len(polyPts) < n * 8 then polyPts = bcreate(n * 16) end
+	local z = Camera.Zoom
+	for k = 1, n do
+		local x, y = xs[k] + dx, ys[k] + dy
+		if z ~= 1 then x, y = zoomed(x, y, z) end
+		buffer.writef32(polyPts, k * 8 - 8, x - Camera.X)
+		buffer.writef32(polyPts, k * 8 - 4, y - Camera.Y)
+	end
+	polyR, polyG, polyB = r, g, b
+	Shapes.polygon(polyPts, 0, n, 0.5, 0.5, clipX0, clipY0, clipX1, clipY1, a or 255, polyRun, polyPixel)
+end
+
 function Draw.BeginPoints() end
 function Draw.EndPoints() end
 function Draw.Point(worldX: number, worldY: number, size: number, r: number, g: number, b: number, a: number?)

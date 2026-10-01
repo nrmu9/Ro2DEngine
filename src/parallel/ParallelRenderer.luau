@@ -349,6 +349,47 @@ function PR.Draw.CircleSDF(x, y, radius, r, g, b, a)
 		end
 	end
 end
+local polyPts = buffer.create(512)
+function PR.Draw.Polygon(xs, ys, r, g, b, a, ox, oy, count)
+	if not PR.IsReady then return end
+	local n = min(count or #xs, #xs, #ys, 65535)
+	if n < 3 then return end
+	if openedAt ~= stepId then openFrame() end
+	local cam = PR.Camera
+	local z = cam.Zoom
+	ox, oy = ox or 0, oy or 0
+	if buffer.len(polyPts) < n * 8 then polyPts = buffer.create(n * 16) end
+	local pts = polyPts
+	local ax, ay, bx, by = math.huge, math.huge, -math.huge, -math.huge
+	for k = 1, n do
+		local x, y = xs[k] + ox, ys[k] + oy
+		if z ~= 1 then x, y = zoomed(x, y, z) end
+		x, y = x - cam.X, y - cam.Y
+		buffer.writef32(pts, k * 8 - 8, x)
+		buffer.writef32(pts, k * 8 - 4, y)
+		if x < ax then ax = x end
+		if x > bx then bx = x end
+		if y < ay then ay = y end
+		if y > by then by = y end
+	end
+	if not (ax <= bx and ay <= by) then return end
+	a = a or 255
+	if nBands == 1 then
+		bands[1].cb:poly(pts, 0, n, r, g, b, a)
+		return
+	end
+	ax, ay, bx, by = DrawBounds.poly(ax, ay, bx, by)
+	local r0, r1, c0, c1 = span(ax, ay, bx, by)
+	for row = r0, r1 do
+		local base = row * cols + 1
+		for col = c0, c1 do
+			local bd = grid[base + col]
+			if bd and bx >= bd.x0 and by >= bd.y0 and ax <= bd.x1 and ay <= bd.y1 then
+				bd.cb:poly(pts, 0, n, r, g, b, a)
+			end
+		end
+	end
+end
 function PR.Draw.MeasureText(text, font, scale)
 	if not font then return 0 end
 	local glyphs, space = font.Glyphs, font.SpaceAdvance

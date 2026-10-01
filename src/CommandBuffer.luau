@@ -10,6 +10,7 @@ CommandBuffer.__index = CommandBuffer
 
 local CLEAR, RECT, RECT_ROT, SPRITE, SPRITE_EX, TEXT = 1, 2, 3, 4, 5, 6
 local TINT, CLIP, POINTS, BACKGROUND, CIRCLE, LINE = 7, 8, 9, 10, 11, 12
+local POLY = 13
 local OP = {
 	CLEAR = CLEAR,
 	RECT = RECT,
@@ -23,6 +24,7 @@ local OP = {
 	BACKGROUND = BACKGROUND,
 	CIRCLE = CIRCLE,
 	LINE = LINE,
+	POLY = POLY,
 }
 CommandBuffer.OP = OP
 
@@ -173,6 +175,20 @@ function CommandBuffer:line(x0, y0, x1, y1, thickness, r, g, b)
 	if reopen then self:beginPoints() end
 end
 
+function CommandBuffer:poly(src: buffer, off: number, n: number, r, g, b, a)
+	local reopen = self.ptsAt ~= nil
+	if reopen then self:endPoints() end
+	local size = 7 + n * 8
+	if self.cur + size > self.cap then self:_need(size) end
+	local buf, c = self.buf, self.cur
+	wu8(buf, c, POLY)
+	wu16(buf, c + 1, n)
+	wu8(buf, c + 3, r); wu8(buf, c + 4, g); wu8(buf, c + 5, b); wu8(buf, c + 6, a or 255)
+	buffer.copy(buf, c + 7, src, off, n * 8)
+	self.cur = c + size
+	if reopen then self:beginPoints() end
+end
+
 function CommandBuffer:sprite(x, y, spriteId, flipX, flipY)
 	if self.cur + 12 > self.cap then self:_need(12) end
 	local buf, c = self.buf, self.cur
@@ -220,7 +236,7 @@ function CommandBuffer.decode(bytes: string, h)
 	local fRect, fRectRot, fPoints = h.rect, h.rectRot, h.points
 	local fSprite, fSpriteEx, fText = h.sprite, h.spriteEx, h.text
 	local fBackground = h.background
-	local fCircle, fLine = h.circle, h.line
+	local fCircle, fLine, fPoly = h.circle, h.line, h.poly
 	local c = 0
 	while c < len do
 		local op = ru8(buf, c)
@@ -277,6 +293,12 @@ function CommandBuffer.decode(bytes: string, h)
 					ru8(buf, c + 21), ru8(buf, c + 22), ru8(buf, c + 23))
 			end
 			c += 24
+		elseif op == POLY then
+			local n = ru16(buf, c + 1)
+			if fPoly then
+				fPoly(h, buf, c + 7, n, ru8(buf, c + 3), ru8(buf, c + 4), ru8(buf, c + 5), ru8(buf, c + 6))
+			end
+			c += 7 + n * 8
 		else
 			break
 		end

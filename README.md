@@ -150,9 +150,19 @@ back to `1` for a HUD drawn over it.
 | `Draw.MeasureText(text, font, scale?)` | Pixel width of a text string. |
 | `Draw.CircleSDF(x, y, radius, r, g, b, a?)` | Anti-aliased filled circle. |
 | `Draw.LineSDF(x0, y0, x1, y1, thickness, r, g, b)` | Anti-aliased line. |
+| `Draw.Polygon(xs, ys, r, g, b, a?, offsetX?, offsetY?, count?)` | Anti-aliased filled polygon, its points `(xs[k] + offsetX, ys[k] + offsetY)` for the first `count` of them (all, by default), one draw however many points. |
 | `Draw.Clear(r, g, b, a?)` | Fill the whole canvas. Ignores the clip. |
 | `Draw.SetClip(x, y, w, h)` | Restrict subsequent drawing to a rectangle. Cuts text off mid-glyph, so scrolling lists need no fade. |
 | `Draw.ClearClip()` | Restore drawing to the full surface. |
+
+`Draw.Polygon` fills by how much of each pixel the shape covers, so its edges are
+smooth with no outline drawn over them, and a shape that crosses itself is filled
+wherever it winds round (a five-pointed star drawn in one stroke has a filled
+middle). A point is the middle of a pixel, as a line's end is: a square from
+`9.5` to `19.5` fills pixels `10` to `19` exactly. It takes up to 65535 points,
+and a point that is not a number leaves the polygon undrawn. Under the parallel
+renderer the whole outline is one command, and a see-through polygon drawn again
+over unchanged pixels is pasted back, as a see-through rect is.
 
 `Assets.LoadSprite` and `Assets.LoadFont` cache their result per `ModuleScript`,
 so requiring the same asset again is free after the first decode.

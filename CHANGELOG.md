@@ -4,6 +4,21 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `Draw.Polygon(xs, ys, r, g, b, a?, offsetX?, offsetY?, count?)`, a filled polygon with
+  anti-aliased edges, on both renderers. A game filling its own shapes did it
+  with one rect to a band of rows, edges hard and stepped, and dozens of commands a
+  shape: a level's drawn decorations, a shape with no outline over it, showed a
+  staircase down every slanted side. Each pixel is covered by as much of it as
+  the shape covers, so a side is as smooth as a line's; a shape crossing itself
+  is filled where it winds round. Under the parallel renderer the outline is one
+  command, routed to the bands its bound reaches, and its rows run as spans
+  between its edges; what lies past a band's sides is never walked. A
+  see-through polygon drawn again over pixels that have not changed is pasted
+  back, as a see-through rect is.
+
 ## [0.8.4] - 2026-09-30
 
 ### Added
