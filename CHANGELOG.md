@@ -4,7 +4,7 @@ All notable changes to Ro2D are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-10-01
 
 ### Added
 - `Draw.Polygon(xs, ys, r, g, b, a?, offsetX?, offsetY?, count?)`, a filled polygon with
@@ -662,6 +662,7 @@ tooling work into a versioned package with automated model builds.
 - GitHub Actions build the distributable `.rbxm` model and attach it to each
   tagged release; a CI workflow builds the project on every push.
 
+[0.9.0]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.9.0
 [0.8.4]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.8.4
 [0.8.3]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.8.3
 [0.8.2]: https://github.com/nrmu9/Ro2DEngine/releases/tag/v0.8.2
